@@ -8,6 +8,7 @@ import gym
 import lasagne
 import theano
 import theano.tensor as T
+from theano.tensor.shared_randomstreams import RandomStreams
 import itertools
 import numpy as np
 import pdb
@@ -53,8 +54,11 @@ def PolicyNetwork(input_var):
     network = lasagne.layers.DenseLayer(incoming=network, num_units=1, nonlinearity=lasagne.nonlinearities.sigmoid)
     return network
 
-def weighted_choice(P):
-    return np.ones(np.shape(P))
+def weighted_choice(P, random_sample, random_var):
+#    s_rng = theano.sandbox.rng_mrg.MRG_RandomStreams(seed)
+    x = T.switch(T.lt(P, random_var), 1, 0)
+    return theano.function([P, random_var], x)
+
 
 def run(choose_action, D_train):
 
@@ -62,7 +66,7 @@ def run(choose_action, D_train):
     env = gym.make('CartPole-v0')
     env.reset()
 
-    for _ in number_of_episodes:
+    for _ in range(number_of_episodes):
         memory = []
         lossplot = []
         observation = env.reset()
@@ -81,15 +85,26 @@ def TrainNetwork():
 
     observations = T.matrix('observations')
     reward_var = T.vector('reward')
+    random_var = T.vector('random')
+    srng = RandomStreams(seed=42)
+
+
     D_network = PolicyNetwork(observations)
     D_params = lasagne.layers.get_all_params(D_network, trainable=True)
 
     P_act = lasagne.layers.get_output(D_network)
-    choose_action = weighted_choice(lasagne.layers.get_output(D_network))
+
 
     D_obj = lasagne.objectives.binary_crossentropy(P_act, reward_var).mean()
     D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-4, beta1=0.5)
-    D_train = theano.function([observations], D_obj, updates=D_updates, name='D_training')
+    D_train = theano.function([observations, reward_var], D_obj, updates=D_updates, name='D_training')
+
+
+
+    rv_u = srng.uniform(size=(1,))
+    random_sampler = theano.function([], rv_u)
+    choose_action = weighted_choice(lasagne.layers.get_output(D_network), random_sampler, random_var)
+
     run(choose_action, D_train)
 
 if __name__=='__main__':
