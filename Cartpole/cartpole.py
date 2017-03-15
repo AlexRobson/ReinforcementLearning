@@ -29,36 +29,25 @@ for i_episode in range(20):
             print("Episode finished after {} timesteps".format(t+1))
             break
 """
-def InferValue(observation):
-    pass
-
-def policy(observation, action_space):
-    """
-    Use the observations of the present state to assess a policy
-    """
-    def greedy(actionvalue, actionspace):
-        """
-        Choose the action that yeilds the greatest value
-        """
-        return actionspace[np.argmax(actionvalue)]
-
-
-    actionvalue = [InferValue(observation, act) for act in action_space]
-    return greedy(actionvalue)
-
 def PolicyNetwork(input_var):
     """
     This sets up a network in Lasagne that decides on what move to play
     """
     network = lasagne.layers.InputLayer(shape=(None,4), input_var=input_var, name='Input')
-    network = lasagne.layers.DenseLayer(incoming=network, num_units=100, nonlinearity=lasagne.nonlinearities.LeakyRectify(0.2))
-    network = lasagne.layers.DenseLayer(incoming=network, num_units=1, nonlinearity=lasagne.nonlinearities.sigmoid)
+    network = lasagne.layers.DenseLayer(incoming=network,
+                                        num_units=200,
+                                        nonlinearity=lasagne.nonlinearities.rectify,
+                                        W=lasagne.init.GlorotNormal(gain=1))
+    network = lasagne.layers.DenseLayer(incoming=network,
+                                        num_units=1,
+                                        W=lasagne.init.GlorotNormal(),
+                                        nonlinearity=lasagne.nonlinearities.sigmoid)
     return network
-
 
 
 def run(choose_action, random_sampler, D_train, D_params):
 
+    Rgoal = 50
     number_of_episodes = 10000
     env = gym.make('CartPole-v0')
     env.reset()
@@ -67,23 +56,25 @@ def run(choose_action, random_sampler, D_train, D_params):
     weightplot = []
     for N in range(number_of_episodes):
 
-#        print "New episode"]
         if N % 100 == 0:
             print("Running {}th episode".format(N))
         memory_obs = []
+        memory_act = []
         creward = 0
         obs = env.reset()
         for t in range(1000):
             memory_obs.append(obs)
-#            pdb.set_trace()
             action = choose_action(obs.astype('float32').reshape(1, 4), random_sampler())
+            memory_act.append(action[0][0])
             obs, reward, done, info = env.step(action[0][0])
             creward += reward
             if done:
                 # Backpropagate the results
                 lossplot.append(
                         D_train(np.array(memory_obs).astype('float32'),
-                                np.tile(creward, (len(memory_obs),)).astype('float32')))
+                                np.array(memory_act).astype('int8'),                   # Actions
+                                np.tile(creward, (len(memory_obs),)).astype('float32'),   # Reward
+                                np.ones((len(memory_obs),),dtype='int8')*np.int8(Rgoal))) # Goal
                 rewardplot.append(creward)
                 weightplot.append(np.median(D_params[1].get_value()))
                 break
@@ -107,13 +98,12 @@ def run(choose_action, random_sampler, D_train, D_params):
 
 def TrainNetwork():
 
-
-
     observations = T.matrix('observations')
     reward_var = T.vector('reward')
     random_var = T.vector('random')
+    action_var = T.vector('actions')
     srng = RandomStreams(seed=42)
-
+    Rgoal = T.vector('goal')
 
     D_network = PolicyNetwork(observations)
     D_params = lasagne.layers.get_all_params(D_network, trainable=True)
@@ -121,36 +111,26 @@ def TrainNetwork():
     P_act = lasagne.layers.get_output(D_network)
     f_act = theano.function([observations], P_act)
 
-
-#    D_obj = lasagne.objectives.binary_crossentropy(P_act, reward_var).mean()
-
-    # Set up an objective function that backpropagates 1 if it wins, 0 otherwise
-    # This creates a vector of 'correct actions'
-    D_obj = lasagne.objectives.binary_crossentropy(
-            P_act, T.switch(T.gt(reward_var, 200), P_act, 1-P_act)
-    ).mean()*(200-reward_var.mean())
+    # Set up an objective function that uses fake action labels.
+    # This creates a vector of 'correct actions' (action taken when a game is won)
+    D_obj = T.switch(T.gt(reward_var, Rgoal),
+                     lasagne.objectives.binary_crossentropy(P_act, action_var),
+                     lasagne.objectives.binary_crossentropy(P_act, 1-action_var)
+                     ).mean()
 
     D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-4, beta1=0.5)
-    D_train = theano.function([observations, reward_var], D_obj, updates=D_updates, name='D_training')
+    D_train = theano.function([observations, action_var, reward_var, Rgoal], D_obj, updates=D_updates, name='D_training')
 
 
 
     rv_u = srng.uniform(size=(1,))
     random_sampler = theano.function([], rv_u)
-    D_out = T.switch(T.lt(lasagne.layers.get_output(D_network), random_var), int(1) ,int(0))
+    D_out = T.switch(T.lt(lasagne.layers.get_output(D_network), random_var), int(0) ,int(1))
 
 
     choose_action = theano.function([observations, random_var], D_out, name='weighted_choice')
-#    pdb.set_trace()
     run(choose_action, random_sampler, D_train, D_params)
 
 
 if __name__=='__main__':
     TrainNetwork()
-
-
-
-
-
-
-
