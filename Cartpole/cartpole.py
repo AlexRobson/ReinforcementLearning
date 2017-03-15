@@ -49,12 +49,12 @@ def PolicyNetwork(input_var):
     This sets up a network in Lasagne that decides on what move to play
     """
     network = lasagne.layers.InputLayer(shape=(None, 4), input_var=input_var, name='Input')
-    network = lasagne.layers.DenseLayer(incoming=network, num_units=100, nonlinearity=lasagne.nonlinearities.leaky_rectify(0.2))
+    network = lasagne.layers.DenseLayer(incoming=network, num_units=100, nonlinearity=lasagne.nonlinearities.LeakyRectify(0.2))
     network = lasagne.layers.DenseLayer(incoming=network, num_units=1, nonlinearity=lasagne.nonlinearities.sigmoid)
     return network
 
-def weighted_choice():
-    pass
+def weighted_choice(P):
+    return np.ones(np.shape(P))
 
 def run(choose_action, D_train):
 
@@ -84,11 +84,10 @@ def TrainNetwork():
     D_network = PolicyNetwork(observations)
     D_params = lasagne.layers.get_all_params(D_network, trainable=True)
 
-    pdb.set_trace()
     P_act = lasagne.layers.get_output(D_network)
-#    choose_action = weighted_choice(lasagne.layers.get_output(D_network))
+    choose_action = weighted_choice(lasagne.layers.get_output(D_network))
 
-    D_obj = lasagne.objectives.binary_crossentropy(P_act, reward_var)
+    D_obj = lasagne.objectives.binary_crossentropy(P_act, reward_var).mean()
     D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-4, beta1=0.5)
     D_train = theano.function([observations], D_obj, updates=D_updates, name='D_training')
     run(choose_action, D_train)
