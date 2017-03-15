@@ -56,28 +56,41 @@ def PolicyNetwork(input_var):
 
 
 
-def run(choose_action, D_train):
+def run(choose_action, random_sampler, D_train):
 
-    number_of_episodes = 100
+    number_of_episodes = 10000
     env = gym.make('CartPole-v0')
     env.reset()
 
-    for _ in range(number_of_episodes):
-        print "New episode"
-        memory = []
+    for N in range(number_of_episodes):
+#        print "New episode"]
+        if N % 100 == 0:
+            print("Running {}th episode".format(N))
+        memory_obs = []
+        memory_reward = []
         lossplot = []
         obs = env.reset()
         for t in range(1000):
-            memory.append(obs)
+            memory_obs.append(obs)
 #            pdb.set_trace()
-            action = choose_action(obs.astype('float32').reshape(1, 4))
+            action = choose_action(obs.astype('float32').reshape(1, 4), random_sampler())
             obs, reward, done, info = env.step(action[0][0])
             if done:
                 # Backpropagate the results
                 lossplot.append(
-                        D_train(np.array(memory).astype('float32'),
-                                np.tile(reward, (len(memory),)).astype('float32')))
+                        D_train(np.array(memory_obs).astype('float32'),
+                                np.tile(np.sum(memory_reward), (len(memory_obs),)).astype('float32')))
                 break
+
+    # Investigate the trained model
+    obs = env.reset()
+    for t in range(1000):
+        env.render()
+        action = choose_action(obs.astype('float32').reshape(1, 4), random_sampler())
+        obs, reward, done, info = env.step(action[0][0])
+        if done:
+            print("Episode finished after {} timesteps".format(t+1))
+            break
 
 def TrainNetwork():
 
@@ -93,20 +106,30 @@ def TrainNetwork():
     D_params = lasagne.layers.get_all_params(D_network, trainable=True)
 
     P_act = lasagne.layers.get_output(D_network)
+    f_act = theano.function([observations], P_act)
 
 
-    D_obj = lasagne.objectives.binary_crossentropy(P_act, reward_var).mean()
+#    D_obj = lasagne.objectives.binary_crossentropy(P_act, reward_var).mean()
+
+    # Set up an objective function that backpropagates 1 if it wins, 0 otherwise
+    # This creates a vector of 'correct actions'
+    D_obj = lasagne.objectives.binary_crossentropy(
+            P_act, T.switch(T.gt(reward_var, 50), P_act, 1-P_act)
+    ).mean()
+
     D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-4, beta1=0.5)
     D_train = theano.function([observations, reward_var], D_obj, updates=D_updates, name='D_training')
 
 
 
-    rv_u = srng.uniform(size=(1,1))
+    rv_u = srng.uniform(size=(1,))
     random_sampler = theano.function([], rv_u)
-    D_out = T.switch(T.lt(lasagne.layers.get_output(D_network), random_sampler()), int(1) ,int(0))
-    choose_action = theano.function([observations], D_out, name='weighted_choice')
+    D_out = T.switch(T.lt(lasagne.layers.get_output(D_network), random_var), int(1) ,int(0))
 
-    run(choose_action, D_train)
+
+    choose_action = theano.function([observations, random_var], D_out, name='weighted_choice')
+#    pdb.set_trace()
+    run(choose_action, random_sampler, D_train)
 
 
 if __name__=='__main__':
