@@ -49,15 +49,11 @@ def PolicyNetwork(input_var):
     """
     This sets up a network in Lasagne that decides on what move to play
     """
-    network = lasagne.layers.InputLayer(shape=(None, 4), input_var=input_var, name='Input')
+    network = lasagne.layers.InputLayer(shape=(None,4), input_var=input_var, name='Input')
     network = lasagne.layers.DenseLayer(incoming=network, num_units=100, nonlinearity=lasagne.nonlinearities.LeakyRectify(0.2))
     network = lasagne.layers.DenseLayer(incoming=network, num_units=1, nonlinearity=lasagne.nonlinearities.sigmoid)
     return network
 
-def weighted_choice(P, random_sample, random_var):
-#    s_rng = theano.sandbox.rng_mrg.MRG_RandomStreams(seed)
-    x = T.switch(T.lt(P, random_var), 1, 0)
-    return theano.function([P, random_var], x)
 
 
 def run(choose_action, D_train):
@@ -67,16 +63,20 @@ def run(choose_action, D_train):
     env.reset()
 
     for _ in range(number_of_episodes):
+        print "New episode"
         memory = []
         lossplot = []
-        observation = env.reset()
+        obs = env.reset()
         for t in range(1000):
-            memory.append(observation)
-            action = choose_action(observation)
-            obs, reward, done, info = env.step(action)
+            memory.append(obs)
+#            pdb.set_trace()
+            action = choose_action(obs.astype('float32').reshape(1, 4))
+            obs, reward, done, info = env.step(action[0][0])
             if done:
                 # Backpropagate the results
-                lossplot.append(D_train(memory, np.tile(reward, (len(memory),))))
+                lossplot.append(
+                        D_train(np.array(memory).astype('float32'),
+                                np.tile(reward, (len(memory),)).astype('float32')))
                 break
 
 def TrainNetwork():
@@ -101,11 +101,13 @@ def TrainNetwork():
 
 
 
-    rv_u = srng.uniform(size=(1,))
+    rv_u = srng.uniform(size=(1,1))
     random_sampler = theano.function([], rv_u)
-    choose_action = weighted_choice(lasagne.layers.get_output(D_network), random_sampler, random_var)
+    D_out = T.switch(T.lt(lasagne.layers.get_output(D_network), random_sampler()), int(1) ,int(0))
+    choose_action = theano.function([observations], D_out, name='weighted_choice')
 
     run(choose_action, D_train)
+
 
 if __name__=='__main__':
     TrainNetwork()
