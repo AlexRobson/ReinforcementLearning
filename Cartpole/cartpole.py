@@ -2,33 +2,13 @@
 This is an experiment in the cartpole experiment in reinforcement learning.
 It uses the AI gym by OpenAi
 """
-
 import gym
-#import agentnet
 import lasagne
 import theano
 import theano.tensor as T
 from theano.tensor.shared_randomstreams import RandomStreams
-import itertools
 import numpy as np
-import pdb
 import matplotlib.pyplot as plt
-"""
-act = itertools.cycle((0,1))
-env = gym.make('CartPole-v0')
-env.reset()
-for i_episode in range(20):
-    observation = env.reset()
-    for t in range(1000):
-        env.render()
-        print(observation)
-#        action = env.action_space.sample()
-        action = next(act)
-#        observation, reward, done, info = env.step(action)
-        if False:
-            print("Episode finished after {} timesteps".format(t+1))
-            break
-"""
 def PolicyNetwork(input_var):
     """
     This sets up a network in Lasagne that decides on what move to play
@@ -123,12 +103,9 @@ def TrainNetwork():
     D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-4, beta1=0.5)
     D_train = theano.function([observations, action_var, reward_var, Rgoal], D_obj, updates=D_updates, name='D_training')
 
-
-
     rv_u = srng.uniform(size=(1,))
     random_sampler = theano.function([], rv_u)
     D_out = T.switch(T.lt(lasagne.layers.get_output(D_network), random_var), int(0) ,int(1))
-
 
     choose_action = theano.function([observations, random_var], D_out, name='weighted_choice')
     run(choose_action, random_sampler, D_train, D_params)
