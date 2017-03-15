@@ -60,6 +60,11 @@ def run(choose_action, random_sampler, D_train, D_params):
                 break
 
     # Investigate the trained model
+
+def runmodel(choose_action, random_sampler):
+
+    env = gym.make('CartPole-v0')
+    env.reset()
     obs = env.reset()
     for t in range(1000):
         env.render()
@@ -69,12 +74,6 @@ def run(choose_action, random_sampler, D_train, D_params):
             print("Episode finished after {} timesteps".format(t+1))
             break
 
-    plt.plot(lossplot)
-    plt.plot(rewardplot)
-    plt.legend(['Loss', 'Reward'])
-    plt.show()
-    plt.plot(weightplot)
-    plt.show()
 
 def TrainNetwork():
 
@@ -108,8 +107,27 @@ def TrainNetwork():
     D_out = T.switch(T.lt(lasagne.layers.get_output(D_network), random_var), int(0) ,int(1))
 
     choose_action = theano.function([observations, random_var], D_out, name='weighted_choice')
-    run(choose_action, random_sampler, D_train, D_params)
+
+    return choose_action, random_sampler, D_train, D_params, D_network
+
+
+def savemodel(network, filename):
+    np.savez(filename, *lasagne.layers.get_all_param_values(network))
+
+def initmodel(network, filename):
+	with np.load(filename) as f:
+		param_values = [f['arr_%d' % i] for i in range(len(f.files))]
+
+	lasagne.layers.set_all_param_values(network, param_values)
 
 
 if __name__=='__main__':
-    TrainNetwork()
+    choose_action, random_sampler, D_train, D_params, D_network = TrainNetwork()
+    if False:
+        run(choose_action, random_sampler, D_train, D_params)
+        runmodel(choose_action, random_sampler)
+        savemodel(D_network, 'D_network.npz')
+    else:
+        initmodel(D_network, 'D_network.npz')
+        runmodel(choose_action, random_sampler)
+
