@@ -12,6 +12,7 @@ from theano.tensor.shared_randomstreams import RandomStreams
 import itertools
 import numpy as np
 import pdb
+import matplotlib.pyplot as plt
 """
 act = itertools.cycle((0,1))
 env = gym.make('CartPole-v0')
@@ -56,30 +57,35 @@ def PolicyNetwork(input_var):
 
 
 
-def run(choose_action, random_sampler, D_train):
+def run(choose_action, random_sampler, D_train, D_params):
 
     number_of_episodes = 10000
     env = gym.make('CartPole-v0')
     env.reset()
-
+    lossplot = []
+    rewardplot = []
+    weightplot = []
     for N in range(number_of_episodes):
+
 #        print "New episode"]
         if N % 100 == 0:
             print("Running {}th episode".format(N))
         memory_obs = []
-        memory_reward = []
-        lossplot = []
+        creward = 0
         obs = env.reset()
         for t in range(1000):
             memory_obs.append(obs)
 #            pdb.set_trace()
             action = choose_action(obs.astype('float32').reshape(1, 4), random_sampler())
             obs, reward, done, info = env.step(action[0][0])
+            creward += reward
             if done:
                 # Backpropagate the results
                 lossplot.append(
                         D_train(np.array(memory_obs).astype('float32'),
-                                np.tile(np.sum(memory_reward), (len(memory_obs),)).astype('float32')))
+                                np.tile(creward, (len(memory_obs),)).astype('float32')))
+                rewardplot.append(creward)
+                weightplot.append(np.median(D_params[1].get_value()))
                 break
 
     # Investigate the trained model
@@ -91,6 +97,13 @@ def run(choose_action, random_sampler, D_train):
         if done:
             print("Episode finished after {} timesteps".format(t+1))
             break
+
+    plt.plot(lossplot)
+    plt.plot(rewardplot)
+    plt.legend(['Loss', 'Reward'])
+    plt.show()
+    plt.plot(weightplot)
+    plt.show()
 
 def TrainNetwork():
 
@@ -114,8 +127,8 @@ def TrainNetwork():
     # Set up an objective function that backpropagates 1 if it wins, 0 otherwise
     # This creates a vector of 'correct actions'
     D_obj = lasagne.objectives.binary_crossentropy(
-            P_act, T.switch(T.gt(reward_var, 50), P_act, 1-P_act)
-    ).mean()
+            P_act, T.switch(T.gt(reward_var, 200), P_act, 1-P_act)
+    ).mean()*(200-reward_var.mean())
 
     D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-4, beta1=0.5)
     D_train = theano.function([observations, reward_var], D_obj, updates=D_updates, name='D_training')
@@ -129,7 +142,7 @@ def TrainNetwork():
 
     choose_action = theano.function([observations, random_var], D_out, name='weighted_choice')
 #    pdb.set_trace()
-    run(choose_action, random_sampler, D_train)
+    run(choose_action, random_sampler, D_train, D_params)
 
 
 if __name__=='__main__':
