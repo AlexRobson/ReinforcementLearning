@@ -118,6 +118,8 @@ def TrainNetwork():
                      lasagne.objectives.binary_crossentropy(P_act, 1-action_var)
                      ).mean()
 
+    D_obj = -lasagne.objectives.binary_crossentropy(P_act, action_var).mean()*(Rgoal-reward_var).mean()
+
     D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-4, beta1=0.5)
     D_train = theano.function([observations, action_var, reward_var, Rgoal], D_obj, updates=D_updates, name='D_training')
 
