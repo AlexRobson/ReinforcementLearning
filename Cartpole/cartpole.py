@@ -25,7 +25,7 @@ def PolicyNetwork(input_var):
     return network
 
 
-def run(choose_action, random_sampler, D_train, D_params):
+def trainmodel(choose_action, random_sampler, D_train, D_params):
 
     Rgoal = 50
     number_of_episodes = 10000
@@ -61,21 +61,23 @@ def run(choose_action, random_sampler, D_train, D_params):
 
     # Investigate the trained model
 
-def runmodel(choose_action, random_sampler):
+
+def runmodel(choose_action, random_sampler, number_of_episodes=20):
 
     env = gym.make('CartPole-v0')
     env.reset()
-    obs = env.reset()
-    for t in range(1000):
-        env.render()
-        action = choose_action(obs.astype('float32').reshape(1, 4), random_sampler())
-        obs, reward, done, info = env.step(action[0][0])
-        if done:
-            print("Episode finished after {} timesteps".format(t+1))
-            break
+    for i_ep in range(number_of_episodes):
+		obs = env.reset()
+		for t in range(1000):
+			env.render()
+			action = choose_action(obs.astype('float32').reshape(1, 4), random_sampler())
+			obs, reward, done, info = env.step(action[0][0])
+			if done:
+				print("Episode finished after {} timesteps".format(t+1))
+				break
 
 
-def TrainNetwork():
+def prepare_functions():
 
     observations = T.matrix('observations')
     reward_var = T.vector('reward')
@@ -122,9 +124,9 @@ def initmodel(network, filename):
 
 
 if __name__=='__main__':
-    choose_action, random_sampler, D_train, D_params, D_network = TrainNetwork()
+    choose_action, random_sampler, D_train, D_params, D_network = prepare_functions()
     if False:
-        run(choose_action, random_sampler, D_train, D_params)
+        trainmodel(choose_action, random_sampler, D_train, D_params)
         runmodel(choose_action, random_sampler)
         savemodel(D_network, 'D_network.npz')
     else:
