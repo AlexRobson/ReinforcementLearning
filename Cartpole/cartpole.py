@@ -26,59 +26,72 @@ def PolicyNetwork(input_var):
     return network
 
 
+def RunEpisode(env, choose_action, memory):
+
+    creward = 0
+    obs = env.reset()
+    for t in range(1000):
+        memory['obs'].append(obs)
+        action = choose_action(obs.astype('float32').reshape(1, 4), random_sampler())
+        memory['act'].append(action[0][0])
+        obs, reward, done, info = env.step(action[0][0])
+        creward += reward
+        if done:
+            break
+
+    return creward, memory
+
 def trainmodel(choose_action, random_sampler, D_train, D_params):
 
-    Rgoal = 50
-    Rtol = 195
-    req_number = 100
-    env = gym.make('CartPole-v0')
-    env.reset()
-    lossplot = []
-    rewardplot = []
-    weightplot = []
-    running_score = []
-    N = 0
-    needs_more_training = True
-    while needs_more_training:
-        N += 1
-        if N % 100 == 0:
-            print("Running {}th episode".format(N))
-        memory_obs = []
-        memory_act = []
-        creward = 0
-        obs = env.reset()
-        for t in range(1000):
-            memory_obs.append(obs)
-            action = choose_action(obs.astype('float32').reshape(1, 4), random_sampler())
-            memory_act.append(action[0][0])
-            obs, reward, done, info = env.step(action[0][0])
-            creward += reward
-            if done:
-                # Backpropagate the results
-                lossplot.append(
-                        D_train(np.array(memory_obs).astype('float32'),
-                                np.array(memory_act).astype('int8'),                   # Actions
-                                np.tile(creward, (len(memory_obs),)).astype('float32'),   # Reward
-                                np.ones((len(memory_obs),),dtype='int8')*np.int8(Rgoal))) # Goal
+	Rgoal = 100
+	eps_per_update = 2
+	Rtol = 195
+	req_number = 100
+	env = gym.make('CartPole-v0')
+	env.reset()
+	lossplot = []
+	rewardplot = []
+	weightplot = []
+	running_score = []
+	N = 0
+	needs_more_training = True
+	while needs_more_training:
+		N += 1
+		if N % 100 == 0:
+			print("Running {}th update".format(N))
 
-                rewardplot.append(creward)
-                weightplot.append(np.median(D_params[1].get_value()))
-                running_score.append(creward)
-                if len(running_score)>req_number:
-                    running_score.pop(0)
-                    print(np.mean(running_score))
-                    if np.mean(running_score)>Rtol:
-                        needs_more_training=False
+		memory = {}
+		memory['obs'] = []
+		memory['act'] = []
+		for _ in range(eps_per_update):
+			creward, memory = RunEpisode(env, choose_action, memory)
 
-                break
+		lossplot.append(
+			D_train(np.array(memory['obs']).astype('float32'),
+					np.array(memory['act']).astype('int8'),                   # Actions
+					np.tile(creward / eps_per_update, (len(memory['obs']),)).astype('float32'),   # Reward
+					np.ones((len(memory['obs']),),dtype='int8')*np.int8(Rgoal))) # Goal
+
+		rewardplot.append(creward)
+		weightplot.append(np.median(D_params[1].get_value()))
+		running_score.append(creward)
+
+		# Update the target
+		if len(running_score)>req_number:
+			running_score.pop(0)
+			print(np.mean(running_score))
+			if np.mean(running_score)>Rtol:
+				needs_more_training=False
+
 
     # Investigate the trained model
 
 
-def runmodel(choose_action, random_sampler, number_of_episodes=110):
+def runmodel(choose_action, random_sampler, number_of_episodes=1, monitor=False):
 
     env = gym.make('CartPole-v0')
-    env = wrappers.Monitor(env, '/tmp/cartpole-experiment-1')
+    if monitor:
+        env = wrappers.Monitor(env, '/tmp/cartpole-experiment-1')
     env.reset()
     for i_ep in range(number_of_episodes):
 		obs = env.reset()
