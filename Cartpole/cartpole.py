@@ -3,6 +3,7 @@ This is an experiment in the cartpole experiment in reinforcement learning.
 It uses the AI gym by OpenAi
 """
 import gym
+from gym import wrappers
 import lasagne
 import theano
 import theano.tensor as T
@@ -62,9 +63,10 @@ def trainmodel(choose_action, random_sampler, D_train, D_params):
     # Investigate the trained model
 
 
-def runmodel(choose_action, random_sampler, number_of_episodes=20):
+def runmodel(choose_action, random_sampler, number_of_episodes=110):
 
     env = gym.make('CartPole-v0')
+    env = wrappers.Monitor(env, '/tmp/cartpole-experiment-1')
     env.reset()
     for i_ep in range(number_of_episodes):
 		obs = env.reset()
