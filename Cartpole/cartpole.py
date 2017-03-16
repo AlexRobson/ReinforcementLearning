@@ -29,14 +29,18 @@ def PolicyNetwork(input_var):
 def trainmodel(choose_action, random_sampler, D_train, D_params):
 
     Rgoal = 50
-    number_of_episodes = 10000
+    Rtol = 195
+    req_number = 100
     env = gym.make('CartPole-v0')
     env.reset()
     lossplot = []
     rewardplot = []
     weightplot = []
-    for N in range(number_of_episodes):
-
+    running_score = []
+    N = 0
+    needs_more_training = True
+    while needs_more_training:
+        N += 1
         if N % 100 == 0:
             print("Running {}th episode".format(N))
         memory_obs = []
@@ -56,8 +60,16 @@ def trainmodel(choose_action, random_sampler, D_train, D_params):
                                 np.array(memory_act).astype('int8'),                   # Actions
                                 np.tile(creward, (len(memory_obs),)).astype('float32'),   # Reward
                                 np.ones((len(memory_obs),),dtype='int8')*np.int8(Rgoal))) # Goal
+
                 rewardplot.append(creward)
                 weightplot.append(np.median(D_params[1].get_value()))
+                running_score.append(creward)
+                if len(running_score)>req_number:
+                    running_score.pop(0)
+                    print(np.mean(running_score))
+                    if np.mean(running_score)>Rtol:
+                        needs_more_training=False
+
                 break
 
     # Investigate the trained model
@@ -127,9 +139,8 @@ def initmodel(network, filename):
 
 if __name__=='__main__':
     choose_action, random_sampler, D_train, D_params, D_network = prepare_functions()
-    if False:
+    if True:
         trainmodel(choose_action, random_sampler, D_train, D_params)
-        runmodel(choose_action, random_sampler)
         savemodel(D_network, 'D_network.npz')
     else:
         initmodel(D_network, 'D_network.npz')
