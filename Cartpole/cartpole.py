@@ -9,26 +9,33 @@ import theano
 import theano.tensor as T
 from theano.tensor.shared_randomstreams import RandomStreams
 import numpy as np
+import pdb
 import matplotlib.pyplot as plt
 def PolicyNetwork(input_var):
+
     """
     This sets up a network in Lasagne that decides on what move to play
     """
-    network = lasagne.layers.InputLayer(shape=(None,4), input_var=input_var, name='Input')
-    network = lasagne.layers.DenseLayer(incoming=network,
+    from lasagne.layers import batch_norm
+    from lasagne.layers import DenseLayer
+    from lasagne.layers import InputLayer
+    from lasagne.nonlinearities import rectify, sigmoid
+    from lasagne.init import GlorotNormal
+    network = InputLayer(shape=(None,4), input_var=input_var, name='Input')
+    network = (DenseLayer(incoming=network,
                                         num_units=200,
-                                        nonlinearity=lasagne.nonlinearities.rectify,
-                                        W=lasagne.init.GlorotNormal(gain=1))
-    network = lasagne.layers.DenseLayer(incoming=network,
+                                        nonlinearity=rectify,
+                                        W=GlorotNormal(gain=1))
+                         )
+    network = DenseLayer(incoming=network,
                                         num_units=1,
-                                        W=lasagne.init.GlorotNormal(),
-                                        nonlinearity=lasagne.nonlinearities.sigmoid)
+                                        W=GlorotNormal(),
+                                        nonlinearity=sigmoid)
     return network
 
 
-def RunEpisode(env, choose_action, memory):
+def RunEpisode(env, choose_action, creward, memory):
 
-    creward = 0
     obs = env.reset()
     for t in range(1000):
         memory['obs'].append(obs)
@@ -44,7 +51,7 @@ def RunEpisode(env, choose_action, memory):
 def trainmodel(choose_action, random_sampler, D_train, D_params):
 
 	Rgoal = 100
-	eps_per_update = 2
+	eps_per_update = 1
 	Rtol = 195
 	req_number = 100
 	env = gym.make('CartPole-v0')
@@ -52,9 +59,11 @@ def trainmodel(choose_action, random_sampler, D_train, D_params):
 	lossplot = []
 	rewardplot = []
 	weightplot = []
+	bestreward = 0
 	running_score = []
 	N = 0
 	needs_more_training = True
+	rescale = 1
 	while needs_more_training:
 		N += 1
 		if N % 100 == 0:
@@ -63,28 +72,31 @@ def trainmodel(choose_action, random_sampler, D_train, D_params):
 		memory = {}
 		memory['obs'] = []
 		memory['act'] = []
-		for _ in range(eps_per_update):
-			creward, memory = RunEpisode(env, choose_action, memory)
+		creward = 0.
 
+		for _ in range(eps_per_update):
+			creward, memory = RunEpisode(env, choose_action, creward, memory)
+			rewardplot.append(creward)
+			running_score.append(creward)
+			if len(running_score)>req_number:
+				running_score.pop(0)
+				print(np.mean(running_score))
+				if np.mean(running_score)>Rtol:
+					needs_more_training=False
+
+			if creward / eps_per_update > bestreward:
+				bestreward = creward / eps_per_update
+				rescale = 1
+			else:
+				scale = 1
+
+		rescale = 1-(creward / eps_per_update) / 200.
 		lossplot.append(
 			D_train(np.array(memory['obs']).astype('float32'),
-					np.array(memory['act']).astype('int8'),                   # Actions
-					np.tile(creward / eps_per_update, (len(memory['obs']),)).astype('float32'),   # Reward
-					np.ones((len(memory['obs']),),dtype='int8')*np.int8(Rgoal))) # Goal
+			        np.array(memory['act']).astype('int8'),
+					np.float32(rescale)))
 
-		rewardplot.append(creward)
 		weightplot.append(np.median(D_params[1].get_value()))
-		running_score.append(creward)
-
-		# Update the target
-		if len(running_score)>req_number:
-			running_score.pop(0)
-			print(np.mean(running_score))
-			if np.mean(running_score)>Rtol:
-				needs_more_training=False
-
-
-    # Investigate the trained model
 
 
 def runmodel(choose_action, random_sampler, number_of_episodes=1, monitor=False):
@@ -112,6 +124,7 @@ def prepare_functions():
     action_var = T.vector('actions')
     srng = RandomStreams(seed=42)
     Rgoal = T.vector('goal')
+    objective_scale = T.scalar('scale')
 
     D_network = PolicyNetwork(observations)
     D_params = lasagne.layers.get_all_params(D_network, trainable=True)
@@ -126,10 +139,10 @@ def prepare_functions():
                      lasagne.objectives.binary_crossentropy(P_act, 1-action_var)
                      ).mean()
 
-    D_obj = -lasagne.objectives.binary_crossentropy(P_act, action_var).mean()*(Rgoal-reward_var).mean()
+    D_obj = -lasagne.objectives.binary_crossentropy(P_act, action_var).mean()*objective_scale
 
-    D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-4, beta1=0.5)
-    D_train = theano.function([observations, action_var, reward_var, Rgoal], D_obj, updates=D_updates, name='D_training')
+    D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-4)
+    D_train = theano.function([observations, action_var, objective_scale], D_obj, updates=D_updates, name='D_training')
 
     rv_u = srng.uniform(size=(1,))
     random_sampler = theano.function([], rv_u)
