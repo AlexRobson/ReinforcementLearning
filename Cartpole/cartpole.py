@@ -23,10 +23,15 @@ def PolicyNetwork(input_var):
     from lasagne.init import GlorotNormal
     network = InputLayer(shape=(None,4), input_var=input_var, name='Input')
     network = (DenseLayer(incoming=network,
-                                        num_units=200,
+                                        num_units=50,
                                         nonlinearity=rectify,
                                         W=GlorotNormal(gain=1))
                          )
+    network = (DenseLayer(incoming=network,
+                          num_units=50,
+                          nonlinearity=rectify,
+                          W=GlorotNormal(gain=1))
+               )
     network = DenseLayer(incoming=network,
                                         num_units=1,
                                         W=GlorotNormal(),
@@ -90,11 +95,9 @@ def trainmodel(choose_action, random_sampler, D_train, D_params):
 			else:
 				scale = 1
 
-		rescale = 1-(creward / eps_per_update) / 200.
 		lossplot.append(
 			D_train(np.array(memory['obs']).astype('float32'),
-			        np.array(memory['act']).astype('int8'),
-					np.float32(rescale)))
+			        np.array(memory['act']).astype('int8')))
 
 		weightplot.append(np.median(D_params[1].get_value()))
 
@@ -124,7 +127,6 @@ def prepare_functions():
     action_var = T.vector('actions')
     srng = RandomStreams(seed=42)
     Rgoal = T.vector('goal')
-    objective_scale = T.scalar('scale')
 
     D_network = PolicyNetwork(observations)
     D_params = lasagne.layers.get_all_params(D_network, trainable=True)
@@ -139,10 +141,10 @@ def prepare_functions():
                      lasagne.objectives.binary_crossentropy(P_act, 1-action_var)
                      ).mean()
 
-    D_obj = -lasagne.objectives.binary_crossentropy(P_act, action_var).mean()*objective_scale
+    D_obj = -lasagne.objectives.binary_crossentropy(P_act, action_var).mean()
 
     D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-4)
-    D_train = theano.function([observations, action_var, objective_scale], D_obj, updates=D_updates, name='D_training')
+    D_train = theano.function([observations, action_var], D_obj, updates=D_updates, name='D_training')
 
     rv_u = srng.uniform(size=(1,))
     random_sampler = theano.function([], rv_u)
