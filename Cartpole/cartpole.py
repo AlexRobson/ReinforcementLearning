@@ -23,12 +23,12 @@ def PolicyNetwork(input_var):
     from lasagne.init import GlorotNormal
     network = InputLayer(shape=(None,4), input_var=input_var, name='Input')
     network = (DenseLayer(incoming=network,
-                                        num_units=50,
+                                        num_units=200,
                                         nonlinearity=rectify,
                                         W=GlorotNormal(gain=1))
                          )
     network = (DenseLayer(incoming=network,
-                          num_units=50,
+                          num_units=200,
                           nonlinearity=rectify,
                           W=GlorotNormal(gain=1))
                )
@@ -72,6 +72,7 @@ def trainmodel(get_action_reward, choose_action, D_train, D_params):
     env.reset()
     lossplot = []
     rewardplot = []
+    expect_reward = []
     weightplot = []
     bestreward = 0
     running_score = []
@@ -81,10 +82,13 @@ def trainmodel(get_action_reward, choose_action, D_train, D_params):
         N += 1
         if N % 100 == 0:
             print("Running {}th update".format(N))
+            if N==200:
+                needs_more_training = False
 
         for _ in range(eps_per_update):
             observations, expected_reward, actual_reward = RunEpisode(env, get_action_reward, choose_action)
             creward = np.sum(actual_reward)
+            expect_reward.append(expected_reward)
             rewardplot.append(creward)
             running_score.append(creward)
             if len(running_score)>req_number:
@@ -101,6 +105,8 @@ def trainmodel(get_action_reward, choose_action, D_train, D_params):
                     np.array(actual_reward).astype('int8')))
 
         weightplot.append(np.median(D_params[1].get_value()))
+
+    return lossplot, rewardplot, expect_reward, weightplot
 
 
 def runmodel(choose_action, number_of_episodes=1, monitor=False):
@@ -167,7 +173,8 @@ def initmodel(network, filename):
 if __name__=='__main__':
     get_action_reward, choose_action, D_train, D_params, D_network = prepare_functions()
     if True:
-        trainmodel(get_action_reward, choose_action, D_train, D_params)
+        lossplot, rewardplot, expected_reward, weightplot = trainmodel(get_action_reward, choose_action, D_train, D_params)
+        pdb.set_trace()
         savemodel(D_network, 'D_network.npz')
     else:
         initmodel(D_network, 'D_network.npz')
