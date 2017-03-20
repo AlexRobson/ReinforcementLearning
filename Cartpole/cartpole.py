@@ -43,7 +43,7 @@ def PolicyNetwork(input_var):
 def RunEpisode(env, get_action_reward, choose_action):
 
     expected_reward = []
-    creward = []
+    actual_reward = []
     observations = []
     obs = env.reset()
     for t in range(1000):
@@ -54,13 +54,13 @@ def RunEpisode(env, get_action_reward, choose_action):
         expected_reward.append(pred_reward)
         # Take action and observe
         obs, reward, done, info = env.step(action)
-        creward.append(reward)
+        actual_reward.append(reward)
         observations.append(obs)
 
         if done:
             break
 
-    return observations, creward, expected_reward
+    return observations, expected_reward, actual_reward
 
 def trainmodel(get_action_reward, choose_action, D_train, D_params):
 
@@ -83,7 +83,7 @@ def trainmodel(get_action_reward, choose_action, D_train, D_params):
             print("Running {}th update".format(N))
 
         for _ in range(eps_per_update):
-            observations, actual_reward, expected_reward = RunEpisode(env, get_action_reward, choose_action)
+            observations, expected_reward, actual_reward = RunEpisode(env, get_action_reward, choose_action)
             creward = np.sum(actual_reward)
             rewardplot.append(creward)
             running_score.append(creward)
@@ -134,8 +134,7 @@ def prepare_functions():
     D_params = lasagne.layers.get_all_params(D_network, trainable=True)
 
     expected_action_rewards = lasagne.layers.get_output(D_network)
-    action_reward = T.switch(T.lt(expected_action_rewards[:,0], expected_action_rewards[:,1]),
-                             expected_action_rewards[:,0], expected_action_rewards[:,1])
+    action_reward = T.max(expected_action_rewards)
 
     # The expected_reward for action is the sum of all rewards subsequent to that action
     # The actual_reward for the action is the total reward of the episode
