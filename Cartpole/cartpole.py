@@ -36,22 +36,22 @@ def PolicyNetwork(input_var):
                                         num_units=2,
                                         W=GlorotNormal(),
                                         nonlinearity=rectify)
-    network = lasagne.layers.ReshapeLayer(network, (2,))
+    network = lasagne.layers.ReshapeLayer(network, (-1, 2))
     return network
 
 
-def RunEpisode(env, get_preferences, choose_action):
+def RunEpisode(env, get_action_reward, choose_action):
 
     expected_reward = []
     creward = []
     observations = []
     obs = env.reset()
     for t in range(1000):
-        #Assess options
-        action_reward = get_preferences(obs.astype('float32').reshape(1,4))
+        # Assess options
+        pred_reward = get_action_reward(obs.astype('float32').reshape(1,4))
         # Decide
         action = choose_action(obs.astype('float32').reshape(1, 4))
-        expected_reward.append(action_reward)
+        expected_reward.append(pred_reward)
         # Take action and observe
         obs, reward, done, info = env.step(action)
         creward.append(reward)
@@ -62,7 +62,7 @@ def RunEpisode(env, get_preferences, choose_action):
 
     return observations, creward, expected_reward
 
-def trainmodel(get_preferences, choose_action, D_train, D_params):
+def trainmodel(get_action_reward, choose_action, D_train, D_params):
 
     Rgoal = 100
     eps_per_update = 1
@@ -83,7 +83,7 @@ def trainmodel(get_preferences, choose_action, D_train, D_params):
             print("Running {}th update".format(N))
 
         for _ in range(eps_per_update):
-            observations, actual_reward, expected_reward = RunEpisode(env, get_preferences, choose_action)
+            observations, actual_reward, expected_reward = RunEpisode(env, get_action_reward, choose_action)
             creward = np.sum(actual_reward)
             rewardplot.append(creward)
             running_score.append(creward)
@@ -123,36 +123,32 @@ def runmodel(choose_action, number_of_episodes=1, monitor=False):
 def prepare_functions():
 
     observations = T.matrix('observations')
-    reward_var = T.vector('reward')
-    random_var = T.vector('random')
+#    random_var = T.vector('random')
     action_var = T.vector('actions')
     srng = RandomStreams(seed=42)
     Rgoal = T.vector('goal')
-    expected_reward = T.vector('expected')
+    expected_reward = T.matrix('expected')
     actual_reward = T.vector('actual')
 
     D_network = PolicyNetwork(observations)
     D_params = lasagne.layers.get_all_params(D_network, trainable=True)
 
-    expected_reward = lasagne.layers.get_output(D_network)
-    get_preferences = theano.function([observations], expected_reward)
-
-    # Convert from a loss aversion function to a reward seeking function.
-    # This is the sum of the reward accumulated by each action. The loss function
-    # is given by the expected reward minus the actual reward.
+    expected_action_rewards = lasagne.layers.get_output(D_network)
+    action_reward = T.switch(T.lt(expected_action_rewards[:,0], expected_action_rewards[:,1]),
+                             expected_action_rewards[:,0], expected_action_rewards[:,1])
 
     # The expected_reward for action is the sum of all rewards subsequent to that action
     # The actual_reward for the action is the total reward of the episode
-    D_obj = lasagne.objectives.squared_error(expected_reward, actual_reward).mean()
+    D_obj = lasagne.objectives.squared_error(action_reward, actual_reward).mean()
 
     D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-4)
     D_train = theano.function([observations, actual_reward], D_obj, updates=D_updates, name='D_training')
 
     rv_u = srng.uniform(size=(1,))
 #    random_sampler = theano.function([], rv_u)
-    action_reward = T.switch(T.lt(expected_reward[0], expected_reward[1]), expected_reward[0], expected_reward[1])
     get_action_reward = theano.function([observations], action_reward)
-    D_out = T.switch(T.lt(expected_reward[0], expected_reward[1]), int(0) ,int(1))
+#    D_out = T.switch(T.lt(expected_action_rewards[:,0], expected_action_rewards[:,1]), int(0), int(1))
+    D_out = T.argmax(expected_action_rewards)
 
     choose_action = theano.function([observations], D_out, name='greedy_choice')
 
@@ -170,9 +166,9 @@ def initmodel(network, filename):
 
 
 if __name__=='__main__':
-    get_preferences, choose_action, D_train, D_params, D_network = prepare_functions()
+    get_action_reward, choose_action, D_train, D_params, D_network = prepare_functions()
     if True:
-        trainmodel(get_preferences, choose_action, D_train, D_params)
+        trainmodel(get_action_reward, choose_action, D_train, D_params)
         savemodel(D_network, 'D_network.npz')
     else:
         initmodel(D_network, 'D_network.npz')
