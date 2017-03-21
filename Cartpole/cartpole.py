@@ -86,11 +86,18 @@ def trainmodel(get_action_reward, choose_action, D_train, D_params):
                 needs_more_training = False
 
         for _ in range(eps_per_update):
+            # Execution
             observations, expected_reward, actual_reward = RunEpisode(env, get_action_reward, choose_action)
+
+            # Bookkeeping
             creward = np.sum(actual_reward)
+
+            cumulative_reward = np.cumsum(actual_reward)
             expect_reward.append(expected_reward)
             rewardplot.append(creward)
             running_score.append(creward)
+
+            # Stopping condition
             if len(running_score)>req_number:
                 running_score.pop(0)
                 print(np.mean(running_score))
@@ -102,7 +109,7 @@ def trainmodel(get_action_reward, choose_action, D_train, D_params):
 
         lossplot.append(
             D_train(np.array(observations).astype('float32'),
-                    np.array(actual_reward).astype('int8')))
+                    np.array(cumulative_reward).astype('int8')))
 
         weightplot.append(np.median(D_params[1].get_value()))
 
@@ -140,11 +147,17 @@ def prepare_functions():
     D_params = lasagne.layers.get_all_params(D_network, trainable=True)
 
     expected_action_rewards = lasagne.layers.get_output(D_network)
-    action_reward = T.max(expected_action_rewards)
+    action_reward = T.max(expected_action_rewards, axis=1)
 
     # The expected_reward for action is the sum of all rewards subsequent to that action
     # The actual_reward for the action is the total reward of the episode
-    D_obj = lasagne.objectives.squared_error(action_reward, actual_reward).mean()
+    def normalise(X):
+        return (X - T.mean(X,keepdims=True,axis=0)) / T.std(X, keepdims=True,axis=0)
+
+
+    D_obj = lasagne.objectives.squared_error(normalise(action_reward),
+                                             normalise(actual_reward)
+                                             ).mean()
 
     D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-4)
     D_train = theano.function([observations, actual_reward], D_obj, updates=D_updates, name='D_training')
@@ -169,11 +182,23 @@ def initmodel(network, filename):
 
     lasagne.layers.set_all_param_values(network, param_values)
 
+def showplots(lossplot, rewardplot, expected_Reward, weightplot):
+    plt.plot(lossplot)
+    plt.xlabel('Episode')
+    plt.ylabel('Loss')
+    plt.show()
+
+    plt.plot(rewardplot)
+    plt.ylabel('Reward')
+    plt.xlabel('Episode')
+    plt.show()
+
 
 if __name__=='__main__':
     get_action_reward, choose_action, D_train, D_params, D_network = prepare_functions()
     if True:
         lossplot, rewardplot, expected_reward, weightplot = trainmodel(get_action_reward, choose_action, D_train, D_params)
+        showplots(lossplot, rewardplot, expected_reward, weightplot)
         pdb.set_trace()
         savemodel(D_network, 'D_network.npz')
     else:
