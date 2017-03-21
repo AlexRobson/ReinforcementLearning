@@ -11,15 +11,17 @@ from theano.tensor.shared_randomstreams import RandomStreams
 import numpy as np
 import pdb
 import matplotlib.pyplot as plt
-def PolicyNetwork(input_var):
+def ValueNetwork(input_var):
 
     """
     This sets up a network in Lasagne that decides on what move to play
     """
+    n_actions = 2
+
     from lasagne.layers import batch_norm
     from lasagne.layers import DenseLayer
     from lasagne.layers import InputLayer
-    from lasagne.nonlinearities import rectify, sigmoid
+    from lasagne.nonlinearities import rectify, sigmoid, softmax
     from lasagne.init import GlorotNormal
     network = InputLayer(shape=(None,4), input_var=input_var, name='Input')
     network = (DenseLayer(incoming=network,
@@ -33,10 +35,10 @@ def PolicyNetwork(input_var):
                           W=GlorotNormal(gain=1))
                )
     network = DenseLayer(incoming=network,
-                                        num_units=2,
+                                        num_units=n_actions,
                                         W=GlorotNormal(),
                                         nonlinearity=rectify)
-    network = lasagne.layers.ReshapeLayer(network, (-1, 2))
+    network = lasagne.layers.ReshapeLayer(network, (-1, n_actions))
     return network
 
 
@@ -143,7 +145,7 @@ def prepare_functions():
     expected_reward = T.matrix('expected')
     actual_reward = T.vector('actual')
 
-    D_network = PolicyNetwork(observations)
+    D_network = ValueNetwork(observations)
     D_params = lasagne.layers.get_all_params(D_network, trainable=True)
 
     expected_action_rewards = lasagne.layers.get_output(D_network)
@@ -152,12 +154,14 @@ def prepare_functions():
     # The expected_reward for action is the sum of all rewards subsequent to that action
     # The actual_reward for the action is the total reward of the episode
     def normalise(X):
-        return (X - T.mean(X,keepdims=True,axis=0)) / T.std(X, keepdims=True,axis=0)
+        # X - T.mean(X,keepdims=True,axis=0)) / T.sum(X, keepdims=True,axis=0)
+        return X
 
 
     D_obj = lasagne.objectives.squared_error(normalise(action_reward),
                                              normalise(actual_reward)
-                                             ).mean()
+                                             )\
+            .mean()
 
     D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-4)
     D_train = theano.function([observations, actual_reward], D_obj, updates=D_updates, name='D_training')
@@ -182,7 +186,7 @@ def initmodel(network, filename):
 
     lasagne.layers.set_all_param_values(network, param_values)
 
-def showplots(lossplot, rewardplot, expected_Reward, weightplot):
+def showplots(lossplot, rewardplot, expected_reward, weightplot):
     plt.plot(lossplot)
     plt.xlabel('Episode')
     plt.ylabel('Loss')
@@ -193,6 +197,10 @@ def showplots(lossplot, rewardplot, expected_Reward, weightplot):
     plt.xlabel('Episode')
     plt.show()
 
+    plt.plot(np.sum(expected_reward))
+    plt.xlabel('Episode')
+    plt.ylabel('Expected Reward')
+    plt.show()
 
 if __name__=='__main__':
     get_action_reward, choose_action, D_train, D_params, D_network = prepare_functions()
