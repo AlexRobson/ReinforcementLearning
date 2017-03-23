@@ -11,6 +11,8 @@ from theano.tensor.shared_randomstreams import RandomStreams
 import numpy as np
 import pdb
 import matplotlib.pyplot as plt
+from functools import partial
+
 def ValueNetwork(input_var):
 
     """
@@ -42,21 +44,30 @@ def ValueNetwork(input_var):
     return network
 
 
-def RunEpisode(env, get_action_reward, choose_action):
+def RunEpisode(env, get_Q_values, policy):
 
+    alfa = 1
+    gamma = 0.99
     expected_reward = []
     actual_reward = []
     observations = []
     obs = env.reset()
     for t in range(1000):
         # Assess options
-        pred_reward = get_action_reward(obs.astype('float32').reshape(1,4))
-        # Decide
-        action = choose_action(obs.astype('float32').reshape(1, 4))
-        expected_reward.append(pred_reward)
-        # Take action and observe
-        obs, reward, done, info = env.step(action)
-        actual_reward.append(reward)
+
+        Q_s = np.max(get_Q_values(obs.astype('float32').reshape(1,4)), axis=1)[0] # Prediction
+        action = policy(obs.astype('float32').reshape(1, 4))[0]
+        new_obs, reward, done, info = env.step(action)
+        if not done:
+            Q_sdash = reward+np.max(get_Q_values(obs.astype('float32').reshape(1,4)), axis=1)[0]
+        else:
+            Q_sdash = reward
+
+        obs = new_obs
+
+        # Book-keeping
+        expected_reward.append(Q_s)
+        actual_reward.append(Q_sdash)
         observations.append(obs)
 
         if done:
@@ -64,7 +75,7 @@ def RunEpisode(env, get_action_reward, choose_action):
 
     return observations, expected_reward, actual_reward
 
-def trainmodel(get_action_reward, choose_action, D_train, D_params):
+def trainmodel(get_Q_values, policy, D_train, D_params):
 
     Rgoal = 100
     eps_per_update = 1
@@ -84,21 +95,20 @@ def trainmodel(get_action_reward, choose_action, D_train, D_params):
         N += 1
         if N % 100 == 0:
             print("Running {}th update".format(N))
-            if N==200:
+            if N==2000:
                 needs_more_training = False
 
         for _ in range(eps_per_update):
             # Execution
-            observations, expected_reward, actual_reward = RunEpisode(env, get_action_reward, choose_action)
+            observations, expected_reward, actual_reward = RunEpisode(env, get_q_values, policy)
 
             # Bookkeeping
             creward = np.sum(actual_reward)
 
-            cumulative_reward = np.cumsum(actual_reward)
             expect_reward.append(expected_reward)
             rewardplot.append(creward)
-            running_score.append(creward)
 
+            running_score.append(creward)
             # Stopping condition
             if len(running_score)>req_number:
                 running_score.pop(0)
@@ -106,12 +116,14 @@ def trainmodel(get_action_reward, choose_action, D_train, D_params):
                 if np.mean(running_score)>Rtol:
                     needs_more_training=False
 
-            if creward / eps_per_update > bestreward:
-                bestreward = creward / eps_per_update
 
-        lossplot.append(
-            D_train(np.array(observations).astype('float32'),
-                    np.array(cumulative_reward).astype('int8')))
+
+
+        observations = np.array(observations).astype('float32')
+        actual_reward = np.expand_dims(np.array(actual_reward).astype('float32'), axis=1)
+
+        lossplot.append(D_train(observations, actual_reward))
+
 
         weightplot.append(np.median(D_params[1].get_value()))
 
@@ -143,13 +155,17 @@ def prepare_functions():
     srng = RandomStreams(seed=42)
     Rgoal = T.vector('goal')
     expected_reward = T.matrix('expected')
-    actual_reward = T.vector('actual')
+    actual_reward = T.matrix('actual')
 
     D_network = ValueNetwork(observations)
     D_params = lasagne.layers.get_all_params(D_network, trainable=True)
 
-    expected_action_rewards = lasagne.layers.get_output(D_network)
-    action_reward = T.max(expected_action_rewards, axis=1)
+    q_values = lasagne.layers.get_output(D_network)
+    policy = partial(T.argmax, axis=1)
+
+    prediction = T.max(q_values, axis=1, keepdims=True)
+    get_q_values = theano.function([observations], q_values)
+    get_prediction = theano.function([observations], prediction)
 
     # The expected_reward for action is the sum of all rewards subsequent to that action
     # The actual_reward for the action is the total reward of the episode
@@ -158,7 +174,7 @@ def prepare_functions():
         return X
 
 
-    D_obj = lasagne.objectives.squared_error(normalise(action_reward),
+    D_obj = lasagne.objectives.squared_error(normalise(prediction),
                                              normalise(actual_reward)
                                              )\
             .mean()
@@ -166,25 +182,21 @@ def prepare_functions():
     D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-4)
     D_train = theano.function([observations, actual_reward], D_obj, updates=D_updates, name='D_training')
 
-    rv_u = srng.uniform(size=(1,))
-#    random_sampler = theano.function([], rv_u)
-    get_action_reward = theano.function([observations], action_reward)
-#    D_out = T.switch(T.lt(expected_action_rewards[:,0], expected_action_rewards[:,1]), int(0), int(1))
-    D_out = T.argmax(expected_action_rewards)
-
-    choose_action = theano.function([observations], D_out, name='greedy_choice')
-
-    return get_action_reward, choose_action, D_train, D_params, D_network
+    policy_action = theano.function([observations], policy(q_values), name='greedy_choice')
+    return get_q_values, policy_action, D_train, D_params, D_network
 
 
 def savemodel(network, filename):
     np.savez(filename, *lasagne.layers.get_all_param_values(network))
 
+
 def initmodel(network, filename):
     with np.load(filename) as f:
+        cumulative_reward = np.cumsum(actual_reward)
         param_values = [f['arr_%d' % i] for i in range(len(f.files))]
 
     lasagne.layers.set_all_param_values(network, param_values)
+
 
 def showplots(lossplot, rewardplot, expected_reward, weightplot):
     plt.plot(lossplot)
@@ -203,11 +215,10 @@ def showplots(lossplot, rewardplot, expected_reward, weightplot):
     plt.show()
 
 if __name__=='__main__':
-    get_action_reward, choose_action, D_train, D_params, D_network = prepare_functions()
+    get_q_values, policy, D_train, D_params, D_network = prepare_functions()
     if True:
-        lossplot, rewardplot, expected_reward, weightplot = trainmodel(get_action_reward, choose_action, D_train, D_params)
+        lossplot, rewardplot, expected_reward, weightplot = trainmodel(get_q_values, policy, D_train, D_params)
         showplots(lossplot, rewardplot, expected_reward, weightplot)
-        pdb.set_trace()
         savemodel(D_network, 'D_network.npz')
     else:
         initmodel(D_network, 'D_network.npz')
