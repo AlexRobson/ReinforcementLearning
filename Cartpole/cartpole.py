@@ -38,7 +38,7 @@ def ValueNetwork(input_var):
                )
     network = DenseLayer(incoming=network,
                                         num_units=n_actions,
-                                        W=GlorotNormal(),
+                                        W=lasagne.init.Uniform(1),
                                         nonlinearity=rectify)
     network = lasagne.layers.ReshapeLayer(network, (-1, n_actions))
     return network
@@ -60,7 +60,7 @@ def RunEpisode(env, get_Q_values, policy):
         action = policy(obs.astype('float32').reshape(1, 4))[0]
         new_obs, reward, done, info = env.step(action)
         if not done:
-            Q_sdash = reward+np.max(get_Q_values(obs.astype('float32').reshape(1,4)), axis=1)[0]
+            Q_sdash = reward+gamma*np.max(get_Q_values(obs.astype('float32').reshape(1,4)), axis=1)[0]
         else:
             Q_sdash = reward
 
@@ -97,14 +97,12 @@ def trainmodel(get_Q_values, policy, D_train, D_params):
         N += 1
         if N % 100 == 0:
             print("Running {}th update".format(N))
-            pdb.set_trace()
-            if N==1000:
+            if N==10000:
                 needs_more_training = False
 
         for _ in range(eps_per_update):
             # Execution
-            observations, expected_reward, received_reward, actual_reward = RunEpisode(env, get_q_values, policy)
-
+            observations, expected_reward, discounted_reward, actual_reward = RunEpisode(env, get_q_values, policy)
             # Bookkeeping
             expect_reward.append(expected_reward)
             rewardplot.append(actual_reward)
@@ -119,9 +117,9 @@ def trainmodel(get_Q_values, policy, D_train, D_params):
 
 
         observations = np.array(observations).astype('float32')
-        received_reward = np.expand_dims(np.array(received_reward).astype('float32'), axis=1)
+        discounted_reward = np.expand_dims(np.array(discounted_reward).astype('float32'), axis=1)
 
-        lossplot.append(D_train(observations, received_reward))
+        lossplot.append(D_train(observations, discounted_reward))
 
 
         weightplot.append(np.median(D_params[1].get_value()))
@@ -154,7 +152,7 @@ def prepare_functions():
     srng = RandomStreams(seed=42)
     Rgoal = T.vector('goal')
     expected_reward = T.matrix('expected')
-    actual_reward = T.matrix('actual')
+    discounted_reward = T.matrix('actual')
 
     D_network = ValueNetwork(observations)
     D_params = lasagne.layers.get_all_params(D_network, trainable=True)
@@ -169,17 +167,18 @@ def prepare_functions():
     # The expected_reward for action is the sum of all rewards subsequent to that action
     # The actual_reward for the action is the total reward of the episode
     def normalise(X):
-        # X - T.mean(X,keepdims=True,axis=0)) / T.sum(X, keepdims=True,axis=0)
+        X = T.switch(T.sum(X)>0, (X - T.mean(X,keepdims=True,axis=0)) / T.std(X, keepdims=True,axis=0)
+                        , X)
         return X
 
 
     D_obj = lasagne.objectives.squared_error(normalise(prediction),
-                                             normalise(actual_reward)
+                                             normalise(discounted_reward)
                                              )\
             .mean()
 
     D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-4)
-    D_train = theano.function([observations, actual_reward], D_obj, updates=D_updates, name='D_training')
+    D_train = theano.function([observations, discounted_reward], D_obj, updates=D_updates, name='D_training')
 
     policy_action = theano.function([observations], policy(q_values), name='greedy_choice')
     return get_q_values, policy_action, D_train, D_params, D_network
