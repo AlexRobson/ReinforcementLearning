@@ -53,6 +53,7 @@ def RunEpisode(env, get_Q_values, policy):
     actual_reward = 0
     observations = []
     obs = env.reset()
+    Q_sdash = np.array(0,dtype='float32')
     for t in range(1000):
         # Assess options
 
@@ -60,15 +61,16 @@ def RunEpisode(env, get_Q_values, policy):
         action = policy(obs.astype('float32').reshape(1, 4))[0]
         new_obs, reward, done, info = env.step(action)
         if not done:
-            Q_sdash = reward+gamma*np.max(get_Q_values(obs.astype('float32').reshape(1,4)), axis=1)[0]
+            Q_sdash += reward+gamma*np.max(get_Q_values(obs.astype('float32').reshape(1,4)), axis=1)[0]
+            Q_sdash = np.append(Q_sdash, np.float32(0))
         else:
-            Q_sdash = reward
+            Q_sdash = Q_sdash + [reward]
 
         obs = new_obs
 
         # Book-keeping
         expected_reward.append(Q_s)
-        received_reward.append(Q_sdash)
+        received_reward = Q_sdash
         actual_reward += reward
         observations.append(obs)
 
@@ -97,7 +99,7 @@ def trainmodel(get_Q_values, policy, D_train, D_params):
         N += 1
         if N % 100 == 0:
             print("Running {}th update".format(N))
-            if N==10000:
+            if N==200:
                 needs_more_training = False
 
         for _ in range(eps_per_update):
