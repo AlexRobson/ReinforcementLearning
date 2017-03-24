@@ -49,7 +49,8 @@ def RunEpisode(env, get_Q_values, policy):
     alfa = 1
     gamma = 0.99
     expected_reward = []
-    actual_reward = []
+    received_reward = []
+    actual_reward = 0
     observations = []
     obs = env.reset()
     for t in range(1000):
@@ -67,13 +68,14 @@ def RunEpisode(env, get_Q_values, policy):
 
         # Book-keeping
         expected_reward.append(Q_s)
-        actual_reward.append(Q_sdash)
+        received_reward.append(Q_sdash)
+        actual_reward += reward
         observations.append(obs)
 
         if done:
             break
 
-    return observations, expected_reward, actual_reward
+    return observations, expected_reward, received_reward, actual_reward
 
 def trainmodel(get_Q_values, policy, D_train, D_params):
 
@@ -95,20 +97,18 @@ def trainmodel(get_Q_values, policy, D_train, D_params):
         N += 1
         if N % 100 == 0:
             print("Running {}th update".format(N))
-            if N==2000:
+            pdb.set_trace()
+            if N==1000:
                 needs_more_training = False
 
         for _ in range(eps_per_update):
             # Execution
-            observations, expected_reward, actual_reward = RunEpisode(env, get_q_values, policy)
+            observations, expected_reward, received_reward, actual_reward = RunEpisode(env, get_q_values, policy)
 
             # Bookkeeping
-            creward = np.sum(actual_reward)
-
             expect_reward.append(expected_reward)
-            rewardplot.append(creward)
-
-            running_score.append(creward)
+            rewardplot.append(actual_reward)
+            running_score.append(actual_reward)
             # Stopping condition
             if len(running_score)>req_number:
                 running_score.pop(0)
@@ -118,11 +118,10 @@ def trainmodel(get_Q_values, policy, D_train, D_params):
 
 
 
-
         observations = np.array(observations).astype('float32')
-        actual_reward = np.expand_dims(np.array(actual_reward).astype('float32'), axis=1)
+        received_reward = np.expand_dims(np.array(received_reward).astype('float32'), axis=1)
 
-        lossplot.append(D_train(observations, actual_reward))
+        lossplot.append(D_train(observations, received_reward))
 
 
         weightplot.append(np.median(D_params[1].get_value()))
