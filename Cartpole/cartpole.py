@@ -51,7 +51,7 @@ def RunEpisode(env, policy):
     for t in range(1000):
         action = policy(obs.astype('float32').reshape(1, 4))[0]
         new_obs, reward, done, info = env.step(action)
-        memory.append((obs, action, new_obs, reward))
+        memory.append((obs, action, new_obs, reward, done))
         obs = new_obs
         if done:
             break
@@ -62,7 +62,7 @@ def RunEpisode(env, policy):
 
 def bookkeeping(episode_memory, reward_per_episode):
 
-    states, actions, new_states, rewards = zip(*episode_memory)
+    states, actions, new_states, rewards, done = zip(*episode_memory)
     # Bookkeeping
     reward_per_episode.append(np.sum(rewards))
 
@@ -115,21 +115,18 @@ def trainmodel(get_prediction, policy, D_train, D_params):
 
 def reflect(memory, get_prediction, D_train):
 
-    gamma = 0.99
+    gamma = 0.90
     batch_size = 400
 
-    IDX = range(len(memory))
     N = np.min((batch_size, len(memory)))
-#    batch_IDX = np.random.choice(IDX, size=(N,))
-
     recall = np.array(memory)[-N:-1]
-    states, actions, new_states, rewards = zip(*recall)
-
+    states, actions, new_states, rewards, done = zip(*recall)
     # Prediction in original states
-    #prediction = get_prediction(states)
+    # #prediction = get_prediction(states)
+    #  Discounted prediction in new states
+    target = np.array(rewards,dtype='float32')\
+             +gamma*get_prediction(np.array(new_states,dtype='float32'))
 
-    # Discounted prediction in new states
-    target = np.array(rewards,dtype='float32')+gamma*get_prediction(np.array(new_states,dtype='float32'))
     return D_train(np.array(states,dtype='float32'), target)
 
 
@@ -186,7 +183,7 @@ def prepare_functions():
                                              )\
             .mean()
 
-    D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-5)
+    D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-4)
     D_train = theano.function([observations, discounted_reward], D_obj, updates=D_updates, name='D_training')
 
     policy_action = theano.function([observations], policy(q_values), name='greedy_choice')
