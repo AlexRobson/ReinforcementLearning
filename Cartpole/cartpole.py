@@ -27,18 +27,19 @@ def ValueNetwork(input_var):
     from lasagne.init import GlorotNormal
     network = InputLayer(shape=(None,4), input_var=input_var, name='Input')
     network = (DenseLayer(incoming=network,
-                                        num_units=100,
+                                        num_units=256,
                                         nonlinearity=tanh,
                                         W=GlorotNormal(gain=1))
                          )
     network = (DenseLayer(incoming=network,
-                          num_units=100,
+                          num_units=64,
                           nonlinearity=tanh,
                           W=GlorotNormal(gain=1))
                )
     network = DenseLayer(incoming=network,
                                         num_units=n_actions,
                                         W=lasagne.init.GlorotNormal(),
+                                        b=lasagne.init.Constant(0),
                                         nonlinearity=rectify)
     network = lasagne.layers.ReshapeLayer(network, (-1, n_actions))
     return network
@@ -50,13 +51,15 @@ def RunEpisode(env, policy):
     memory = []
     for t in range(1000):
         action = policy(obs.astype('float32').reshape(1, 4))[0]
+        if np.random.rand()<0.05:
+            print "Random"
+            action = np.random.random_integers(0,1, ())
+
         new_obs, reward, done, info = env.step(action)
         memory.append((obs, action, new_obs, reward, done))
         obs = new_obs
         if done:
             break
-
-
 
     return memory
 
@@ -71,7 +74,7 @@ def bookkeeping(episode_memory, reward_per_episode):
 def trainmodel(get_prediction, policy, D_train, D_params):
 
     # Initialise
-    eps_per_update = 5
+    eps_per_update = 1
     Rtol = 195
     Emax = 2000
     req_number = 10
@@ -112,6 +115,7 @@ def trainmodel(get_prediction, policy, D_train, D_params):
         lossplot.append(reflect(long_term_memory, get_prediction, D_train))
 
     return lossplot, rewards_per_episode
+
 
 def reflect(memory, get_prediction, D_train):
 
@@ -163,6 +167,8 @@ def prepare_functions():
     rv_u = srng.uniform(size=(1,))
     random_sampler = theano.function([], rv_u)
 
+
+
     policy = partial(T.argmax, axis=1)
 
     prediction = T.max(q_values, axis=1, keepdims=True)
@@ -183,7 +189,8 @@ def prepare_functions():
                                              )\
             .mean()
 
-    D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-4)
+#    D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-4)
+    D_updates = lasagne.updates.rmsprop(D_obj, D_params, learning_rate=2e-4)
     D_train = theano.function([observations, discounted_reward], D_obj, updates=D_updates, name='D_training')
 
     policy_action = theano.function([observations], policy(q_values), name='greedy_choice')
