@@ -44,43 +44,29 @@ def ValueNetwork(input_var):
     return network
 
 
-def RunEpisode(env, get_prediction, policy):
+def RunEpisode(env, policy):
 
-    alfa = 1
-    gamma = 0.99
-    expected_reward = []
-    received_reward = []
-    actual_reward = 0
-    observations = []
     obs = env.reset()
-#    Q_sdash = np.array(0,dtype='float32')
-    Q_sdash = []
+    memory = []
     for t in range(1000):
-        # Assess options
-
-        Q_s = get_prediction(obs.astype('float32').reshape(1,4))[0] # Prediction
         action = policy(obs.astype('float32').reshape(1, 4))[0]
         new_obs, reward, done, info = env.step(action)
-        if not done:
-            #Get the predicted future discounted rewards
-            Q_sdash.append(
-                    reward+gamma*get_prediction(new_obs.astype('float32').reshape(1,4))[0])
-        else:
-            Q_sdash.append(reward)
-
+        memory.append((obs, action, new_obs, reward))
         obs = new_obs
-
-        #print("{}, {}".format(Q_s, Q_sdash[-1]))
-        # Book-keeping
-        expected_reward.append(Q_s)
-        received_reward = Q_sdash
-        actual_reward += reward
-        observations.append(obs)
-
         if done:
             break
 
-    return observations, expected_reward, received_reward, actual_reward
+
+
+    return memory
+
+def bookkeeping(episode_memory, reward_per_episode):
+
+    states, actions, new_states, rewards = zip(*episode_memory)
+    # Bookkeeping
+    reward_per_episode.append(np.sum(rewards))
+
+
 
 def trainmodel(get_prediction, policy, D_train, D_params):
 
@@ -90,9 +76,10 @@ def trainmodel(get_prediction, policy, D_train, D_params):
     Emax = 2000
     req_number = 10
     lossplot = []
-    rewardplot = []
+    rewards_per_episode = []
     expect_reward = []
     weightplot = []
+    long_term_memory = []
     running_score = []
     N = 0
     needs_more_training = True
@@ -103,33 +90,47 @@ def trainmodel(get_prediction, policy, D_train, D_params):
 
 
     while needs_more_training:
-
         for _ in range(eps_per_update):
             N += 1
             if N % 100 == 0:
                 print("Running {}th update".format(N))
             if N==Emax:
                 needs_more_training = False
-            observations, expected_reward, discounted_reward, actual_reward = RunEpisode(env, get_prediction, policy)
-            # Bookkeeping
-            expect_reward.append(expected_reward)
-            rewardplot.append(actual_reward)
-            running_score.append(actual_reward)
+            episode_memory = RunEpisode(env, policy)
+            long_term_memory.extend(episode_memory)
+            bookkeeping(episode_memory, rewards_per_episode)
+
             # Stopping condition
+            running_score.append(rewards_per_episode[-1])
             if len(running_score)>req_number:
                 running_score.pop(0)
                 print(np.mean(running_score))
                 if np.mean(running_score)>Rtol:
                     needs_more_training=False
 
+        # Updating
+        lossplot.append(reflect(long_term_memory, get_prediction, D_train))
 
-        observations = np.array(observations).astype('float32')
-        discounted_reward = np.expand_dims(np.array(discounted_reward).astype('float32'), axis=1)
+    return lossplot, rewards_per_episode
 
-        lossplot.append(D_train(observations, discounted_reward))
-        weightplot.append(np.median(D_params[1].get_value()))
+def reflect(memory, get_prediction, D_train):
 
-    return lossplot, rewardplot, expect_reward, weightplot
+    gamma = 0.99
+    batch_size = 400
+
+    IDX = range(len(memory))
+    N = np.min((batch_size, len(memory)))
+#    batch_IDX = np.random.choice(IDX, size=(N,))
+
+    recall = np.array(memory)[-N:-1]
+    states, actions, new_states, rewards = zip(*recall)
+
+    # Prediction in original states
+    #prediction = get_prediction(states)
+
+    # Discounted prediction in new states
+    target = np.array(rewards,dtype='float32')+gamma*get_prediction(np.array(new_states,dtype='float32'))
+    return D_train(np.array(states,dtype='float32'), target)
 
 
 def runmodel(choose_action, number_of_episodes=1, monitor=False):
@@ -152,10 +153,7 @@ def runmodel(choose_action, number_of_episodes=1, monitor=False):
 def prepare_functions():
 
     observations = T.matrix('observations')
-#    random_var = T.vector('random')
-    action_var = T.vector('actions')
     srng = RandomStreams(seed=42)
-    Rgoal = T.vector('goal')
     expected_reward = T.matrix('expected')
     discounted_reward = T.matrix('actual')
 
@@ -163,6 +161,11 @@ def prepare_functions():
     D_params = lasagne.layers.get_all_params(D_network, trainable=True)
 
     q_values = lasagne.layers.get_output(D_network)
+
+
+    rv_u = srng.uniform(size=(1,))
+    random_sampler = theano.function([], rv_u)
+
     policy = partial(T.argmax, axis=1)
 
     prediction = T.max(q_values, axis=1, keepdims=True)
@@ -178,14 +181,12 @@ def prepare_functions():
         X = (X - X_m) / (T.sqrt(X_var+eps))
         return X
 
-
-
     D_obj = lasagne.objectives.squared_error(prediction,
                                              discounted_reward
                                              )\
             .mean()
 
-    D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-4)
+    D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-5)
     D_train = theano.function([observations, discounted_reward], D_obj, updates=D_updates, name='D_training')
 
     policy_action = theano.function([observations], policy(q_values), name='greedy_choice')
@@ -198,13 +199,12 @@ def savemodel(network, filename):
 
 def initmodel(network, filename):
     with np.load(filename) as f:
-        cumulative_reward = np.cumsum(actual_reward)
         param_values = [f['arr_%d' % i] for i in range(len(f.files))]
 
     lasagne.layers.set_all_param_values(network, param_values)
 
 
-def showplots(lossplot, rewardplot, expected_reward, weightplot):
+def showplots(lossplot, rewardplot):
     plt.plot(lossplot)
     plt.xlabel('Episode')
     plt.ylabel('Loss')
@@ -215,19 +215,19 @@ def showplots(lossplot, rewardplot, expected_reward, weightplot):
     plt.xlabel('Episode')
     plt.show()
 
-    initial_expected_rewards = map(lambda x: x[0], expected_reward)
-    plt.plot(initial_expected_rewards)
-    plt.xlabel('Episode')
-    plt.ylabel('Expected Reward')
-    plt.show()
+#    initial_expected_rewards = map(lambda x: x[0], expected_reward)
+#    plt.plot(initial_expected_rewards)
+#    plt.xlabel('Episode')
+#    plt.ylabel('Expected Reward')
+#    plt.show()
 
 if __name__=='__main__':
     get_q_values, policy, D_train, D_params, D_network = prepare_functions()
     if True:
-        lossplot, rewardplot, expected_reward, weightplot = trainmodel(get_q_values, policy, D_train, D_params)
-        showplots(lossplot, rewardplot, expected_reward, weightplot)
+        lossplot, rewards_per_episode = trainmodel(get_q_values, policy, D_train, D_params)
+        showplots(lossplot, rewards_per_episode)
         savemodel(D_network, 'D_network.npz')
     else:
         initmodel(D_network, 'D_network.npz')
-        runmodel(choose_action)
+        runmodel(policy)
 
