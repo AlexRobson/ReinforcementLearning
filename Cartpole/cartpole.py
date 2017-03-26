@@ -23,28 +23,28 @@ def ValueNetwork(input_var):
     from lasagne.layers import batch_norm
     from lasagne.layers import DenseLayer
     from lasagne.layers import InputLayer
-    from lasagne.nonlinearities import rectify, sigmoid, softmax
+    from lasagne.nonlinearities import rectify, sigmoid, softmax, tanh
     from lasagne.init import GlorotNormal
     network = InputLayer(shape=(None,4), input_var=input_var, name='Input')
     network = (DenseLayer(incoming=network,
-                                        num_units=200,
-                                        nonlinearity=rectify,
+                                        num_units=100,
+                                        nonlinearity=tanh,
                                         W=GlorotNormal(gain=1))
                          )
     network = (DenseLayer(incoming=network,
-                          num_units=200,
-                          nonlinearity=rectify,
+                          num_units=100,
+                          nonlinearity=tanh,
                           W=GlorotNormal(gain=1))
                )
     network = DenseLayer(incoming=network,
                                         num_units=n_actions,
-                                        W=lasagne.init.Uniform(1),
+                                        W=lasagne.init.GlorotNormal(),
                                         nonlinearity=rectify)
     network = lasagne.layers.ReshapeLayer(network, (-1, n_actions))
     return network
 
 
-def RunEpisode(env, get_Q_values, policy):
+def RunEpisode(env, get_prediction, policy):
 
     alfa = 1
     gamma = 0.99
@@ -53,21 +53,24 @@ def RunEpisode(env, get_Q_values, policy):
     actual_reward = 0
     observations = []
     obs = env.reset()
-    Q_sdash = np.array(0,dtype='float32')
+#    Q_sdash = np.array(0,dtype='float32')
+    Q_sdash = []
     for t in range(1000):
         # Assess options
 
-        Q_s = np.max(get_Q_values(obs.astype('float32').reshape(1,4)), axis=1)[0] # Prediction
+        Q_s = get_prediction(obs.astype('float32').reshape(1,4))[0] # Prediction
         action = policy(obs.astype('float32').reshape(1, 4))[0]
         new_obs, reward, done, info = env.step(action)
         if not done:
-            Q_sdash += reward+gamma*np.max(get_Q_values(obs.astype('float32').reshape(1,4)), axis=1)[0]
-            Q_sdash = np.append(Q_sdash, np.float32(0))
+            #Get the predicted future discounted rewards
+            Q_sdash.append(
+                    reward+gamma*get_prediction(new_obs.astype('float32').reshape(1,4))[0])
         else:
-            Q_sdash = Q_sdash + [reward]
+            Q_sdash.append(reward)
 
         obs = new_obs
 
+        #print("{}, {}".format(Q_s, Q_sdash[-1]))
         # Book-keeping
         expected_reward.append(Q_s)
         received_reward = Q_sdash
@@ -79,32 +82,35 @@ def RunEpisode(env, get_Q_values, policy):
 
     return observations, expected_reward, received_reward, actual_reward
 
-def trainmodel(get_Q_values, policy, D_train, D_params):
+def trainmodel(get_prediction, policy, D_train, D_params):
 
-    Rgoal = 100
-    eps_per_update = 1
+    # Initialise
+    eps_per_update = 5
     Rtol = 195
-    req_number = 100
-    env = gym.make('CartPole-v0')
-    env.reset()
+    Emax = 2000
+    req_number = 10
     lossplot = []
     rewardplot = []
     expect_reward = []
     weightplot = []
-    bestreward = 0
     running_score = []
     N = 0
     needs_more_training = True
+
+    # Setup
+    env = gym.make('CartPole-v0')
+    env.reset()
+
+
     while needs_more_training:
-        N += 1
-        if N % 100 == 0:
-            print("Running {}th update".format(N))
-            if N==200:
-                needs_more_training = False
 
         for _ in range(eps_per_update):
-            # Execution
-            observations, expected_reward, discounted_reward, actual_reward = RunEpisode(env, get_q_values, policy)
+            N += 1
+            if N % 100 == 0:
+                print("Running {}th update".format(N))
+            if N==Emax:
+                needs_more_training = False
+            observations, expected_reward, discounted_reward, actual_reward = RunEpisode(env, get_prediction, policy)
             # Bookkeeping
             expect_reward.append(expected_reward)
             rewardplot.append(actual_reward)
@@ -117,13 +123,10 @@ def trainmodel(get_Q_values, policy, D_train, D_params):
                     needs_more_training=False
 
 
-
         observations = np.array(observations).astype('float32')
         discounted_reward = np.expand_dims(np.array(discounted_reward).astype('float32'), axis=1)
 
         lossplot.append(D_train(observations, discounted_reward))
-
-
         weightplot.append(np.median(D_params[1].get_value()))
 
     return lossplot, rewardplot, expect_reward, weightplot
@@ -169,13 +172,16 @@ def prepare_functions():
     # The expected_reward for action is the sum of all rewards subsequent to that action
     # The actual_reward for the action is the total reward of the episode
     def normalise(X):
-        X = T.switch(T.sum(X)>0, (X - T.mean(X,keepdims=True,axis=0)) / T.std(X, keepdims=True,axis=0)
-                        , X)
+        eps = 1e-4
+        X_m = T.mean(X, keepdims=True, axis=0)
+        X_var = T.var(X, keepdims=True, axis=0)
+        X = (X - X_m) / (T.sqrt(X_var+eps))
         return X
 
 
-    D_obj = lasagne.objectives.squared_error(normalise(prediction),
-                                             normalise(discounted_reward)
+
+    D_obj = lasagne.objectives.squared_error(prediction,
+                                             discounted_reward
                                              )\
             .mean()
 
@@ -183,7 +189,7 @@ def prepare_functions():
     D_train = theano.function([observations, discounted_reward], D_obj, updates=D_updates, name='D_training')
 
     policy_action = theano.function([observations], policy(q_values), name='greedy_choice')
-    return get_q_values, policy_action, D_train, D_params, D_network
+    return get_prediction, policy_action, D_train, D_params, D_network
 
 
 def savemodel(network, filename):
@@ -209,7 +215,8 @@ def showplots(lossplot, rewardplot, expected_reward, weightplot):
     plt.xlabel('Episode')
     plt.show()
 
-    plt.plot(np.sum(expected_reward))
+    initial_expected_rewards = map(lambda x: x[0], expected_reward)
+    plt.plot(initial_expected_rewards)
     plt.xlabel('Episode')
     plt.ylabel('Expected Reward')
     plt.show()
