@@ -39,7 +39,7 @@ def ValueNetwork(input_var):
     network = DenseLayer(incoming=network,
                                         num_units=n_actions,
                                         W=lasagne.init.GlorotNormal(),
-                                        b=lasagne.init.Constant(0),
+                                        b=lasagne.init.Constant(1),
                                         nonlinearity=rectify)
     network = lasagne.layers.ReshapeLayer(network, (-1, n_actions))
     return network
@@ -128,9 +128,12 @@ def reflect(memory, get_output, policy, get_prediction, D_train):
     # Prediction in original states
     # #prediction = get_prediction(states)
     #  Discounted prediction in new states
+
+    Q_values = get_output(np.array(states).astype('float32'))
+    choices = policy(np.array(states, dtype='float32'))
+    predictions = get_prediction(np.array(states).astype('float32'))
     target = np.array(rewards,dtype='float32')[:,None]\
              +gamma*get_prediction(np.array(new_states,dtype='float32'))
-
     return D_train(np.array(states,dtype='float32'), target)
 
 
@@ -194,7 +197,7 @@ def prepare_functions():
     D_updates = lasagne.updates.rmsprop(D_obj, D_params, learning_rate=2e-4)
     D_train = theano.function([observations, discounted_reward], D_obj, updates=D_updates, name='D_training')
 
-    policy_action = theano.function([observations], policy(q_values), name='greedy_choice')
+    policy_action = theano.function([observations], T.argmax(q_values, axis=1),  name='greedy_choice')
     return get_output, get_prediction, policy_action, D_train, D_params, D_network
 
 
