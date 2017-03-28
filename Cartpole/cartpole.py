@@ -34,24 +34,24 @@ def ValueNetwork(input_var):
     network = (DenseLayer(incoming=network,
                           num_units=64,
                           nonlinearity=tanh,
-                          W=GlorotNormal(gain=1))
+                          W=lasagne.init.HeUniform())
                )
     network = DenseLayer(incoming=network,
                                         num_units=n_actions,
-                                        W=lasagne.init.GlorotNormal(),
+                                        W=lasagne.init.HeUniform(),
                                         b=lasagne.init.Constant(1),
-                                        nonlinearity=rectify)
+                                        nonlinearity=None)
     network = lasagne.layers.ReshapeLayer(network, (-1, n_actions))
     return network
 
 
-def RunEpisode(env, get_prediction, policy):
+def RunEpisode(env, get_prediction, policy, eps):
 
     obs = env.reset()
     memory = []
     for t in range(1000):
         action = policy(obs.astype('float32').reshape(1, 4))[0]
-        if np.random.rand()<0.05:
+        if np.random.rand()<eps:
             action = np.random.random_integers(0,1, ())
 
         new_obs, reward, done, info = env.step(action)
@@ -90,7 +90,7 @@ def trainmodel(get_output, get_prediction, policy, D_train, D_params):
     env = gym.make('CartPole-v0')
     env.reset()
 
-
+    eps=1
     while needs_more_training:
         for _ in range(eps_per_update):
             N += 1
@@ -98,7 +98,10 @@ def trainmodel(get_output, get_prediction, policy, D_train, D_params):
                 print("Running {}th update".format(N))
             if N==Emax:
                 needs_more_training = False
-            episode_memory = RunEpisode(env, get_output, policy)
+
+            if eps>0.05:
+                eps *= 0.99
+            episode_memory = RunEpisode(env, get_output, policy, eps)
             long_term_memory.extend(episode_memory)
             bookkeeping(episode_memory, rewards_per_episode)
             states, actions, new_states, rewards, dones = zip(*episode_memory)
@@ -132,7 +135,7 @@ def reflect(memory, get_output, policy, get_prediction, D_train):
     Q_values = get_output(np.array(states).astype('float32'))
     choices = policy(np.array(states, dtype='float32'))
     predictions = get_prediction(np.array(states).astype('float32'))
-    target = np.array(rewards,dtype='float32')[:,None]\
+    target = np.array(rewards,dtype='float32')\
              +gamma*get_prediction(np.array(new_states,dtype='float32'))
     return D_train(np.array(states,dtype='float32'), target)
 
@@ -158,8 +161,8 @@ def prepare_functions():
 
     observations = T.matrix('observations')
     srng = RandomStreams(seed=42)
-    expected_reward = T.matrix('expected')
-    discounted_reward = T.matrix('actual')
+    expected_reward = T.vector('expected')
+    discounted_reward = T.vector('actual')
 
     D_network = ValueNetwork(observations)
     D_params = lasagne.layers.get_all_params(D_network, trainable=True)
@@ -175,14 +178,14 @@ def prepare_functions():
     policy = partial(T.argmax, axis=1)
 
     get_output = theano.function([observations], q_values)
-    prediction = T.max(q_values, axis=1, keepdims=True)
+    prediction = T.max(q_values, axis=1)
     get_q_values = theano.function([observations], q_values)
     get_prediction = theano.function([observations], prediction)
 
     # The expected_reward for action is the sum of all rewards subsequent to that action
     # The actual_reward for the action is the total reward of the episode
     def normalise(X):
-        eps = 1e-4
+        aps = 1e-4
         X_m = T.mean(X, keepdims=True, axis=0)
         X_var = T.var(X, keepdims=True, axis=0)
         X = (X - X_m) / (T.sqrt(X_var+eps))
@@ -193,8 +196,8 @@ def prepare_functions():
                                              )\
             .mean()
 
-#    D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-4)
-    D_updates = lasagne.updates.rmsprop(D_obj, D_params, learning_rate=2e-4)
+    D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-5)
+#    D_updates = lasagne.updates.rmsprop(D_obj, D_params, learning_rate=2e-4)
     D_train = theano.function([observations, discounted_reward], D_obj, updates=D_updates, name='D_training')
 
     policy_action = theano.function([observations], T.argmax(q_values, axis=1),  name='greedy_choice')
