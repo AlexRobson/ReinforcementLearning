@@ -46,6 +46,15 @@ def ValueNetwork(input_var):
 
 
 def RunEpisode(env, get_prediction, policy, eps):
+    """
+    This function does a run of an episode in the Open AI gym environment
+    :param env: The Open AI gym environment
+    :param get_prediction: A theano function that returns the value of the best Q
+    :param policy: A theano function that selects the next action, based upon the given state
+    :param eps: The exploration rate.
+    :return: memory: This is a list of tuples encoding
+     (state, action, new_states, rewards, termination) for the episode
+    """
 
     obs = env.reset()
     memory = []
@@ -63,9 +72,11 @@ def RunEpisode(env, get_prediction, policy, eps):
     return memory
 
 def bookkeeping(episode_memory, reward_per_episode):
+    """
+    Helper function that updates various lists and records of parameters, states, etc.
+    """
 
     states, actions, new_states, rewards, done = zip(*episode_memory)
-    # Bookkeeping
     reward_per_episode.append(np.sum(rewards))
 
 
@@ -79,8 +90,6 @@ def trainmodel(get_output, get_prediction, policy, D_train, D_params):
     req_number = 10
     lossplot = []
     rewards_per_episode = []
-    expect_reward = []
-    weightplot = []
     long_term_memory = []
     running_score = []
     N = 0
@@ -103,9 +112,12 @@ def trainmodel(get_output, get_prediction, policy, D_train, D_params):
                 eps *= 0.99
             episode_memory = RunEpisode(env, get_output, policy, eps)
             long_term_memory.extend(episode_memory)
+
+            # Bookkeeping and debugging
             bookkeeping(episode_memory, rewards_per_episode)
             states, actions, new_states, rewards, dones = zip(*episode_memory)
             #print(actions)
+
             # Stopping condition
             running_score.append(rewards_per_episode[-1])
             if len(running_score)>req_number:
@@ -122,6 +134,19 @@ def trainmodel(get_output, get_prediction, policy, D_train, D_params):
 
 def reflect(memory, get_output, policy, get_prediction, D_train):
 
+    """
+    This function handles the update steps. It ingests memory (a tuple of game state-actions
+    transitions and then calculates two quantities, as part of the Bellman equation:
+    * predictions: Predictions of the Q-values at a given input step.
+    * target: The reward in the transition plus the discounted (predictions of) Q-values at the subsequent states,
+    :param memory: A list of tuples: (state, action, new_state, reward, done)
+    :param get_output: A theano function that does a forward-pass. Takes in states
+    :param policy: A theano function that executes the policy at a given state. Takes in states
+    :param get_prediction: A theano function that returns the best predicted Q-value at a given state
+    :param D_train: The update function, that takes in the predictions and targets
+    :return: Returns the loss that is backpropagated (via D_train)
+    """
+
     gamma = 0.90
     batch_size = 400
     N = np.min((batch_size, len(memory)))
@@ -129,9 +154,8 @@ def reflect(memory, get_output, policy, get_prediction, D_train):
     recall = np.array(memory)[batch_IDX]
     states, actions, new_states, rewards, done = zip(*recall)
     # Prediction in original states
-    # #prediction = get_prediction(states)
-    #  Discounted prediction in new states
 
+    # These are useful helper functions for use in diagnosing
     Q_values = get_output(np.array(states).astype('float32'))
     choices = policy(np.array(states, dtype='float32'))
     predictions = get_prediction(np.array(states).astype('float32'))
@@ -159,31 +183,22 @@ def runmodel(choose_action, number_of_episodes=1, monitor=False):
 
 def prepare_functions():
 
+    """
+    This prepares the theano/lasagne functions for use in the training functions
+    """
     observations = T.matrix('observations')
     srng = RandomStreams(seed=42)
-    expected_reward = T.vector('expected')
     discounted_reward = T.vector('actual')
 
     D_network = ValueNetwork(observations)
     D_params = lasagne.layers.get_all_params(D_network, trainable=True)
-
     q_values = lasagne.layers.get_output(D_network)
-
-
     rv_u = srng.uniform(size=(1,))
-    random_sampler = theano.function([], rv_u)
-
-
-
-    policy = partial(T.argmax, axis=1)
 
     get_output = theano.function([observations], q_values)
     prediction = T.max(q_values, axis=1)
-    get_q_values = theano.function([observations], q_values)
     get_prediction = theano.function([observations], prediction)
 
-    # The expected_reward for action is the sum of all rewards subsequent to that action
-    # The actual_reward for the action is the total reward of the episode
     def normalise(X):
         aps = 1e-4
         X_m = T.mean(X, keepdims=True, axis=0)
@@ -197,7 +212,6 @@ def prepare_functions():
             .sum()
 
     D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-6)
-#    D_updates = lasagne.updates.rmsprop(D_obj, D_params, learning_rate=2e-4)
     D_train = theano.function([observations, discounted_reward], D_obj, updates=D_updates, name='D_training')
 
     policy_action = theano.function([observations], T.argmax(q_values, axis=1),  name='greedy_choice')
