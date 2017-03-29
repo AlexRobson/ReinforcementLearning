@@ -73,7 +73,7 @@ def bookkeeping(episode_memory, reward_per_episode):
 def trainmodel(get_output, get_prediction, policy, D_train, D_params):
 
     # Initialise
-    eps_per_update = 1
+    eps_per_update = 2
     Rtol = 195
     Emax = 2000
     req_number = 10
@@ -105,7 +105,7 @@ def trainmodel(get_output, get_prediction, policy, D_train, D_params):
             long_term_memory.extend(episode_memory)
             bookkeeping(episode_memory, rewards_per_episode)
             states, actions, new_states, rewards, dones = zip(*episode_memory)
-            print(actions)
+            #print(actions)
             # Stopping condition
             running_score.append(rewards_per_episode[-1])
             if len(running_score)>req_number:
@@ -194,9 +194,9 @@ def prepare_functions():
     D_obj = lasagne.objectives.squared_error(prediction,
                                              discounted_reward
                                              )\
-            .mean()
+            .sum()
 
-    D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-5)
+    D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-6)
 #    D_updates = lasagne.updates.rmsprop(D_obj, D_params, learning_rate=2e-4)
     D_train = theano.function([observations, discounted_reward], D_obj, updates=D_updates, name='D_training')
 
