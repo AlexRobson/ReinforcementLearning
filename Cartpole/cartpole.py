@@ -13,7 +13,18 @@ import pdb
 import matplotlib.pyplot as plt
 from functools import partial
 
-def ValueNetwork(input_var):
+
+def normalise(X):
+
+
+    eps = 1e-4
+    X_m = T.mean(X, keepdims=True, axis=0)
+    X_var = T.var(X, keepdims=True, axis=0)
+    X = (X - X_m) / (T.sqrt(X_var+eps))
+    return X
+
+
+def QNetwork(input_var):
 
     """
     This sets up a network in Lasagne that decides on what move to play
@@ -45,7 +56,7 @@ def ValueNetwork(input_var):
     return network
 
 
-def RunEpisode(env, get_prediction, policy, eps):
+def RunEpisode(env, policy, eps):
     """
     This function does a run of an episode in the Open AI gym environment
     :param env: The Open AI gym environment
@@ -81,7 +92,7 @@ def bookkeeping(episode_memory, reward_per_episode):
 
 
 
-def trainmodel(get_output, get_prediction, policy, D_train, D_params):
+def trainmodel(get_output, policy, D_train, D_params):
 
     # Initialise
     eps_per_update = 2
@@ -110,7 +121,7 @@ def trainmodel(get_output, get_prediction, policy, D_train, D_params):
 
             if eps>0.05:
                 eps *= 0.99
-            episode_memory = RunEpisode(env, get_output, policy, eps)
+            episode_memory = RunEpisode(env, policy, eps)
             long_term_memory.extend(episode_memory)
 
             # Bookkeeping and debugging
@@ -127,12 +138,12 @@ def trainmodel(get_output, get_prediction, policy, D_train, D_params):
                     needs_more_training=False
 
         # Updating
-        lossplot.append(reflect(long_term_memory, get_output, policy, get_prediction, D_train))
+        lossplot.append(reflect(long_term_memory, get_output, policy, D_train))
 
     return lossplot, rewards_per_episode
 
 
-def reflect(memory, get_output, policy, get_prediction, D_train):
+def reflect(memory, get_q_values, policy, D_train):
 
     """
     This function handles the update steps. It ingests memory (a tuple of game state-actions
@@ -156,11 +167,11 @@ def reflect(memory, get_output, policy, get_prediction, D_train):
     # Prediction in original states
 
     # These are useful helper functions for use in diagnosing
-    Q_values = get_output(np.array(states).astype('float32'))
-    choices = policy(np.array(states, dtype='float32'))
-    predictions = get_prediction(np.array(states).astype('float32'))
+    Q_ = get_q_values(np.array(states).astype('float32'))
+    Q_dash = get_q_values(np.array(new_states).astype('float32'))
+    predictions = Q_[:, actions]
     target = np.array(rewards,dtype='float32')\
-             +gamma*get_prediction(np.array(new_states,dtype='float32'))
+             +gamma*np.max(Q_dash,axis=1)
     return D_train(np.array(states,dtype='float32'), target)
 
 
@@ -188,23 +199,39 @@ def prepare_functions():
     """
     observations = T.matrix('observations')
     srng = RandomStreams(seed=42)
+    predictions = T.vector('predictions')
+    predictions_ct = theano.gradient.disconnected_grad_(predictions)
     discounted_reward = T.vector('actual')
+    r = T.vector('random')
 
-    D_network = ValueNetwork(observations)
-    D_params = lasagne.layers.get_all_params(D_network, trainable=True)
-    q_values = lasagne.layers.get_output(D_network)
+    # Set up random sampling used in some policies
     rv_u = srng.uniform(size=(1,))
+    r = theano.function([], rv_u)
 
-    get_output = theano.function([observations], q_values)
-    prediction = T.max(q_values, axis=1)
+
+    # Set up the network
+    D_network = QNetwork(observations)
+    q_values = lasagne.layers.get_output(D_network)
+    probabilities = lasagne.nonlinearities.softmax(q_values)
+    D_params = lasagne.layers.get_all_params(D_network, trainable=True)
+    get_q_values = theano.function([observations], q_values)
+
+
+    # Policies:
+    # Policy1: 'greedy_choice': Greedy
+    # Policy2: ' weighted_choice': chooses actions based upon probabilities
+    policyname='weighted'
+#    policyname='greedy'
+    if policyname=='greedy':
+        actions = T.argmax(q_values, axis=1)
+    elif policyname=='weighted':
+        actions = T.argmax(T.abs_(T.extra_ops.cumsum(probabilities,axis=1)-r()), axis=1)
+    else:
+        raise Exception
+
+    policy_action = theano.function([observations], actions,  name=policyname)
+    prediction = q_values[:, actions]
     get_prediction = theano.function([observations], prediction)
-
-    def normalise(X):
-        aps = 1e-4
-        X_m = T.mean(X, keepdims=True, axis=0)
-        X_var = T.var(X, keepdims=True, axis=0)
-        X = (X - X_m) / (T.sqrt(X_var+eps))
-        return X
 
     D_obj = lasagne.objectives.squared_error(prediction,
                                              discounted_reward
@@ -214,8 +241,7 @@ def prepare_functions():
     D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-6)
     D_train = theano.function([observations, discounted_reward], D_obj, updates=D_updates, name='D_training')
 
-    policy_action = theano.function([observations], T.argmax(q_values, axis=1),  name='greedy_choice')
-    return get_output, get_prediction, policy_action, D_train, D_params, D_network
+    return get_q_values, policy_action, D_train, D_params, D_network
 
 
 def savemodel(network, filename):
@@ -240,16 +266,11 @@ def showplots(lossplot, rewardplot):
     plt.xlabel('Episode')
     plt.show()
 
-#    initial_expected_rewards = map(lambda x: x[0], expected_reward)
-#    plt.plot(initial_expected_rewards)
-#    plt.xlabel('Episode')
-#    plt.ylabel('Expected Reward')
-#    plt.show()
 
 if __name__=='__main__':
-    get_output, get_q_values, policy, D_train, D_params, D_network = prepare_functions()
+    get_output, policy, D_train, D_params, D_network = prepare_functions()
     if True:
-        lossplot, rewards_per_episode = trainmodel(get_output, get_q_values, policy, D_train, D_params)
+        lossplot, rewards_per_episode = trainmodel(get_output, policy, D_train, D_params)
         showplots(lossplot, rewards_per_episode)
         savemodel(D_network, 'D_network.npz')
     else:
