@@ -194,6 +194,9 @@ def runmodel(choose_action, number_of_episodes=1, monitor=False):
 
 def prepare_functions():
 
+    from lasagne.regularization import regularize_layer_params_weighted, regularize_layer_params
+    from lasagne.regularization import l1, l2
+
     """
     This prepares the theano/lasagne functions for use in the training functions
     """
@@ -216,6 +219,7 @@ def prepare_functions():
     D_params = lasagne.layers.get_all_params(D_network, trainable=True)
     get_q_values = theano.function([observations], q_values)
 
+    l1_penalty = regularize_layer_params(lasagne.layers.get_all_layers(D_network), l1)
 
     # Policies:
     # Policy1: 'greedy_choice': Greedy
@@ -236,7 +240,7 @@ def prepare_functions():
     D_obj = lasagne.objectives.squared_error(prediction,
                                              discounted_reward
                                              )\
-            .sum()
+            .mean() + l1_penalty
 
     D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-6)
     D_train = theano.function([observations, discounted_reward], D_obj, updates=D_updates, name='D_training')
