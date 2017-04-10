@@ -92,7 +92,7 @@ def bookkeeping(episode_memory, reward_per_episode):
 
 
 
-def trainmodel(get_output, policy, D_train, D_params):
+def trainmodel(functions):
 
     # Initialise
     eps_per_update = 2
@@ -106,6 +106,10 @@ def trainmodel(get_output, policy, D_train, D_params):
     N = 0
     needs_more_training = True
 
+    get_output = functions['get_q_values']
+    policy = functions['policy_action']
+    D_train = functions['D_train']
+    D_params = functions['D_params']
     # Setup
     env = gym.make('CartPole-v0')
     env.reset()
@@ -219,7 +223,7 @@ def prepare_functions():
     D_params = lasagne.layers.get_all_params(D_network, trainable=True)
     get_q_values = theano.function([observations], q_values)
 
-    l1_penalty = regularize_layer_params(lasagne.layers.get_all_layers(D_network), l1)
+    l1_penalty = 1e-4 * regularize_layer_params(lasagne.layers.get_all_layers(D_network), l1)
 
     # Policies:
     # Policy1: 'greedy_choice': Greedy
@@ -245,7 +249,13 @@ def prepare_functions():
     D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-6)
     D_train = theano.function([observations, discounted_reward], D_obj, updates=D_updates, name='D_training')
 
-    return get_q_values, policy_action, D_train, D_params, D_network
+    functions = {}
+    functions['get_q_values'] = get_q_values
+    functions['policy_action'] = policy_action
+    functions['D_train'] = D_train
+    functions['D_params'] = D_params
+    functions['D_network'] = D_network
+    return functions
 
 
 def savemodel(network, filename):
@@ -272,12 +282,12 @@ def showplots(lossplot, rewardplot):
 
 
 if __name__=='__main__':
-    get_output, policy, D_train, D_params, D_network = prepare_functions()
+    funcdict= prepare_functions()
     if True:
-        lossplot, rewards_per_episode = trainmodel(get_output, policy, D_train, D_params)
+        lossplot, rewards_per_episode = trainmodel(funcdict)
         showplots(lossplot, rewards_per_episode)
-        savemodel(D_network, 'D_network.npz')
+        savemodel(funcdict['D_network'], 'D_network.npz')
     else:
-        initmodel(D_network, 'D_network.npz')
-        runmodel(policy)
+        initmodel(funcdict['D_network'], 'D_network.npz')
+        runmodel(funcdict['policy'])
 
