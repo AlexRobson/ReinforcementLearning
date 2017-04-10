@@ -1,0 +1,2 @@
+This directory is to store various algorithms that should be applied
+to all environments.
