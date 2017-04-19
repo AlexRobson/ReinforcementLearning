@@ -1,5 +1,5 @@
 # ReinforcementLearning
-Originally a repo to explore the exercises and material in ReinforcementLearning: An Introduction [Sutton &amp; Barto], however it is now really a repo to attempt to 'solve' the environments in OpenAI gym. 
+A repo to attempt to solve the environments in OpenAI gym using different algorithms, using the exercises and material in ReinforcementLearning: An Introduction [Sutton &amp; Barto]
 
 # Useful Links:
 
