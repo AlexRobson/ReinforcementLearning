@@ -13,6 +13,13 @@ import pdb
 import matplotlib.pyplot as plt
 from functools import partial
 
+GAMMA = 0.95
+BATCH_SIZE = 64
+EPS_MIN = 0.05
+EPS_DECAY = 0.995
+MEMORY_SIZE = 2000
+EPS_START = 1
+LEARN_RATE = 1e-3
 
 def normalise(X):
 
@@ -34,24 +41,26 @@ def QNetwork(input_var):
     from lasagne.layers import batch_norm
     from lasagne.layers import DenseLayer
     from lasagne.layers import InputLayer
-    from lasagne.nonlinearities import rectify, sigmoid, softmax, tanh
+    from lasagne.nonlinearities import rectify, linear, sigmoid, softmax, tanh
     from lasagne.init import GlorotNormal
     network = InputLayer(shape=(None,4), input_var=input_var, name='Input')
     network = (DenseLayer(incoming=network,
-                                        num_units=256,
-                                        nonlinearity=tanh,
-                                        W=GlorotNormal(gain=1))
+                                        num_units=24,
+                                        nonlinearity=rectify,
+                                        W=GlorotNormal())
                          )
     network = (DenseLayer(incoming=network,
-                          num_units=64,
-                          nonlinearity=tanh,
-                          W=lasagne.init.HeUniform())
+                          num_units=24,
+                          nonlinearity=rectify,
+                          W=GlorotNormal())
+
+#                          W=lasagne.init.HeUniform())
                )
     network = DenseLayer(incoming=network,
                                         num_units=n_actions,
-                                        W=lasagne.init.HeUniform(),
-                                        b=lasagne.init.Constant(1),
-                                        nonlinearity=None)
+                                        W=GlorotNormal(),
+                                        b=lasagne.init.Constant(0),
+                                        nonlinearity=linear)
     network = lasagne.layers.ReshapeLayer(network, (-1, n_actions))
     return network
 
@@ -69,10 +78,13 @@ def RunEpisode(env, policy, eps):
 
     obs = env.reset()
     memory = []
+    R = 0
     for t in range(1000):
         action = policy(obs.astype('float32').reshape(1, 4))[0]
-        if np.random.rand()<eps:
-            action = np.random.random_integers(0,1, ())
+#        pdb.set_trace()
+        r = np.random.rand()
+        if r<eps:
+            action = np.random.random_integers(0,1, ()).tolist()
 
         new_obs, reward, done, info = env.step(action)
         memory.append((obs, action, new_obs, reward, done))
@@ -114,7 +126,7 @@ def trainmodel(functions):
     env = gym.make('CartPole-v0')
     env.reset()
 
-    eps=1
+    eps=EPS_START
     while needs_more_training:
         for _ in range(eps_per_update):
             N += 1
@@ -123,15 +135,19 @@ def trainmodel(functions):
             if N==Emax:
                 needs_more_training = False
 
-            if eps>0.05:
-                eps *= 0.99
+            if eps>EPS_MIN:
+                eps *= EPS_DECAY
+
             episode_memory = RunEpisode(env, policy, eps)
-            long_term_memory.extend(episode_memory)
+            if len(long_term_memory)<MEMORY_SIZE:
+                long_term_memory.extend(episode_memory)
+            else:
+                long_term_memory.pop(0)
 
             # Bookkeeping and debugging
             bookkeeping(episode_memory, rewards_per_episode)
             states, actions, new_states, rewards, dones = zip(*episode_memory)
-            #print(actions)
+            print(actions)
 
             # Stopping condition
             running_score.append(rewards_per_episode[-1])
@@ -142,12 +158,12 @@ def trainmodel(functions):
                     needs_more_training=False
 
         # Updating
-        lossplot.append(reflect(long_term_memory, get_output, policy, D_train))
+        lossplot.append(reflect(long_term_memory, get_output, policy, D_train, functions))
 
     return lossplot, rewards_per_episode
 
 
-def reflect(memory, get_q_values, policy, D_train):
+def reflect(memory, get_q_values, policy, D_train, functions):
 
     """
     This function handles the update steps. It ingests memory (a tuple of game state-actions
@@ -162,21 +178,33 @@ def reflect(memory, get_q_values, policy, D_train):
     :return: Returns the loss that is backpropagated (via D_train)
     """
 
-    gamma = 0.90
-    batch_size = 400
-    N = np.min((batch_size, len(memory)))
-    batch_IDX = np.random.choice(np.arange(N), size=(N,))
+    N = np.min((BATCH_SIZE, len(memory)))
+    batch_IDX = np.random.choice(np.arange(N), size=(N,), replace=False)
     recall = np.array(memory)[batch_IDX]
     states, actions, new_states, rewards, done = zip(*recall)
     # Prediction in original states
 
+    rewards = np.array(rewards)
     # These are useful helper functions for use in diagnosing
     Q_ = get_q_values(np.array(states).astype('float32'))
     Q_dash = get_q_values(np.array(new_states).astype('float32'))
     predictions = Q_[:, actions]
+
+#    pdb.set_trace()
     target = np.array(rewards,dtype='float32')\
-             +gamma*np.max(Q_dash,axis=1)
-    return D_train(np.array(states,dtype='float32'), target)
+             +GAMMA*np.amax(Q_dash,axis=1)
+
+    target[np.where(done)] = rewards[np.where(done)]
+
+
+    inputs = zip(np.array(states, dtype='float32'), target)
+
+    loss = 0
+    for s_, t_ in inputs:
+        loss += D_train(s_[None,:], np.array(t_).reshape(1))
+
+    return loss
+#    return D_train(np.array(states,dtype='float32'), target)
 
 
 def runmodel(choose_action, number_of_episodes=1, monitor=False):
@@ -228,7 +256,7 @@ def prepare_functions():
     # Policies:
     # Policy1: 'greedy_choice': Greedy
     # Policy2: ' weighted_choice': chooses actions based upon probabilities
-    policyname='weighted'
+    policyname='greedy'
 #    policyname='greedy'
     if policyname=='greedy':
         actions = T.argmax(q_values, axis=1)
@@ -238,15 +266,15 @@ def prepare_functions():
         raise Exception
 
     policy_action = theano.function([observations], actions,  name=policyname)
-    prediction = q_values[:, actions]
+    prediction = q_values[:, actions].reshape((-1,))
     get_prediction = theano.function([observations], prediction)
 
     D_obj = lasagne.objectives.squared_error(prediction,
                                              discounted_reward
                                              )\
-            .mean() + l1_penalty
+            .mean(axis=0, keepdims=False)# + l1_penalty
 
-    D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=2e-6)
+    D_updates = lasagne.updates.adam(D_obj, D_params,learning_rate=LEARN_RATE)
     D_train = theano.function([observations, discounted_reward], D_obj, updates=D_updates, name='D_training')
 
     functions = {}
@@ -255,6 +283,8 @@ def prepare_functions():
     functions['D_train'] = D_train
     functions['D_params'] = D_params
     functions['D_network'] = D_network
+    functions['get_params'] = lasagne.layers.get_all_params(D_network)
+    functions['get_all_param_values'] = lasagne.layers.get_all_param_values(D_network)
     return functions
 
 
